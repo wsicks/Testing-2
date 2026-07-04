@@ -107,6 +107,9 @@ export function normalizeGammaMarket(
 
   return {
     conditionId: m.conditionId,
+    venueId: "polymarket",
+    venueMarketId: m.conditionId,
+    venueTicker: m.slug,
     gammaId: m.id,
     slug: m.slug,
     eventSlug: event?.slug,
@@ -115,6 +118,14 @@ export function normalizeGammaMarket(
     description: m.description,
     category: m.category || pickCategory(event?.tags),
     tags,
+    outcomeType: "binary",
+    tradable: true,
+    referenceOnly: false,
+    sourceUrl: event?.slug
+      ? `https://polymarket.com/event/${event.slug}`
+      : m.slug
+        ? `https://polymarket.com/market/${m.slug}`
+        : undefined,
     endDate: m.endDate,
     startDate: m.startDate,
     active: m.active,

@@ -160,18 +160,54 @@ scripts/                      # background worker + demo seeder
 tests/                        # unit (engines) + integration (adapters)
 ```
 
-### Data sources (official Polymarket APIs)
+### Venues & data sources (all official APIs — nothing scraped)
 
-| API | Used for |
-|---|---|
-| `gamma-api.polymarket.com` | events, markets, tags, outcomes, liquidity, volume, best bid/ask, price changes |
-| `clob.polymarket.com` | order books, midpoints, spreads, price history |
-| `data-api.polymarket.com` | public trade tape, read-only wallet positions/value |
-| `ws-subscriptions-clob.polymarket.com` | market channel (client-side live updates) |
+The terminal is multi-venue: every source lives behind the `VenueAdapter`
+contract (`src/lib/venues/`), execution logic is never shared across venues,
+and a signal on one venue is never assumed tradable on another without
+explicit mapping, liquidity/fee/settlement checks, and user approval.
+
+| Venue | Class | Data | Trading |
+|---|---|---|---|
+| **Polymarket** (Gamma/CLOB/Data APIs + market WS) | event-market outcome tokens | markets, books, history, tape | paper ✓ · live locked behind 5 gates |
+| **Kalshi** (official trade-api/v2) | regulated US event contracts | events, markets, books (YES asks derived from NO bids), tape | paper ✓ · live adapter ships locked (needs API key + RSA signing + venue terms; demo env separate) |
+| **Coinbase** (Advanced Trade public) | crypto spot (`outcomeType: "asset"`) | products, books, native candles, tape | paper ✓ · live adapter ships locked (needs scoped credentials) |
+| **CoinGecko** (free API) | **reference-only** | prices, 24h vol/change | never — reference data cannot execute |
+
+Every source exposes a transparency record on **/sources**: license/terms
+note, update cadence, rate-limit posture, live request/failure counters,
+last success/failure, freshness, and data class (tradable vs reference-only).
+Internal market keys are venue-prefixed (`ks:TICKER`, `cb:BTC-USD`;
+Polymarket keeps raw condition ids), so keys never collide and token-prefix
+routing picks the owning venue for books, tapes, candles and execution.
+
+**Cross-venue intelligence** (`/crossvenue`): the mapping engine compares
+markets across venues by parsed structure — crypto thresholds
+(`asset/direction/level/date`), close-time windows, categories, stated
+resolution sources — never by title similarity alone. Statuses are
+conservative: automation caps at `strong_candidate` (`exact` is reserved for
+human confirmation), threshold disagreements are `conflict`, event↔spot links
+are `reference_only`, and resolution *wording* is always flagged
+non-comparable pending human review. Two cross-venue signals build on this:
+`reference_price` (Coinbase spot + realized vol vs a crypto-linked market's
+implied probability; self-rejects on >5s-stale spot) and `venue_divergence`
+(**candidate discrepancies** between rule-comparable Polymarket/Kalshi pairs,
+costed with both venues' spreads — never presented as arbitrage). The
+autopilot remains Polymarket-only; cross-venue automation has no opt-in path
+by design.
+
+**Charting**: TradingView **Lightweight Charts** (Apache-2.0) renders our own
+normalized data — native Coinbase candles, probability lines with Coinbase
+spot overlays + threshold lines for crypto-linked event markets. A
+TradingView **UDF-compatible datafeed** (`/api/tv/{config,search,symbols,history,time}`)
+serves `POLYMARKET:<id>` / `KALSHI:<ticker>` / `COINBASE:<product>` symbols
+from backend data for operators licensed to use Advanced Charts; no
+TradingView data is scraped or proxied.
 
 All server-side reads are cached (in-memory, optionally Redis) with TTLs to
 respect upstream rate limits. Endpoint shapes were verified against the live
-production APIs; see the adapters in `src/lib/polymarket/`.
+production APIs of all three venues; see `src/lib/venues/` and
+`src/lib/polymarket/`.
 
 ### Storage
 

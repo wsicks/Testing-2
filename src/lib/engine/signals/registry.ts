@@ -10,6 +10,8 @@ import { crossMarketSignal } from "./crossMarket";
 import { closingSoonSignal } from "./closingSoon";
 import { dislocationSignal } from "./dislocation";
 import { microstructureSignal } from "./microstructure";
+import { referencePriceSignal } from "./referencePrice";
+import { venueDivergenceSignal } from "./venueDivergence";
 
 export const STRATEGIES: SignalStrategy[] = [
   liquiditySpreadSignal,
@@ -19,6 +21,8 @@ export const STRATEGIES: SignalStrategy[] = [
   closingSoonSignal,
   dislocationSignal,
   microstructureSignal,
+  referencePriceSignal,
+  venueDivergenceSignal,
 ];
 
 export function getStrategy(id: string): SignalStrategy | undefined {

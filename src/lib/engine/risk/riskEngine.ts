@@ -84,6 +84,9 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
   // downgrade to warnings for SELLs closing an existing position
   const exitRelax = Boolean(proposal.isExit) && proposal.side === "SELL";
   const blockUnlessExit: "block" | "warn" = exitRelax ? "warn" : "block";
+  // spot products (Coinbase) price in USD, not probabilities: bounds, spread
+  // and slippage go relative-to-mid, and probability math (EV/Kelly) is off
+  const isAsset = market?.outcomeType === "asset";
 
   const entryPrice = proposal.price;
   const notionalUsd = entryPrice * proposal.size;
@@ -117,11 +120,29 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
     ),
   );
 
+  // venue tradability: reference-only sources can NEVER receive orders
+  checks.push(
+    rc(
+      "venue_tradability",
+      Boolean(market && market.tradable && !market.referenceOnly),
+      market
+        ? market.referenceOnly
+          ? `${market.venueId} data for this market is reference-only — not executable`
+          : market.tradable
+            ? `${market.venueId} market is tradable`
+            : `${market.venueId} market is not currently tradable`
+        : "No market attached — venue tradability unverified",
+      blockUnlessExit,
+    ),
+  );
+
   checks.push(
     rc(
       "price_bounds",
-      entryPrice >= 0.01 && entryPrice <= 0.99,
-      `Entry ${(entryPrice * 100).toFixed(1)}c must be within 1c–99c`,
+      isAsset ? entryPrice > 0 : entryPrice >= 0.01 && entryPrice <= 0.99,
+      isAsset
+        ? `Entry $${entryPrice.toLocaleString()} must be positive`
+        : `Entry ${(entryPrice * 100).toFixed(1)}c must be within 1c–99c`,
       "block",
       entryPrice,
     ),
@@ -129,15 +150,22 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
 
   // ── microstructure ──────────────────────────────────────────────────────
   const spread = book?.spread ?? market?.spread;
+  const midRef = book?.midpoint ?? market?.midpoint ?? entryPrice;
+  // asset books quote USD spreads — compare relative to mid against the same
+  // maxSpread budget (interpreted as a fraction for assets)
+  const spreadEff =
+    spread === undefined ? undefined : isAsset && midRef > 0 ? spread / midRef : spread;
   checks.push(
     rc(
       "spread_limit",
-      spread !== undefined && spread <= settings.maxSpread,
-      spread === undefined
+      spreadEff !== undefined && spreadEff <= settings.maxSpread,
+      spreadEff === undefined
         ? "Spread unavailable"
-        : `Spread ${(spread * 100).toFixed(1)}c vs max ${(settings.maxSpread * 100).toFixed(1)}c`,
+        : isAsset
+          ? `Relative spread ${(spreadEff * 100).toFixed(3)}% vs max ${(settings.maxSpread * 100).toFixed(1)}%`
+          : `Spread ${(spreadEff * 100).toFixed(1)}c vs max ${(settings.maxSpread * 100).toFixed(1)}c`,
       blockUnlessExit,
-      spread,
+      spreadEff,
       settings.maxSpread,
     ),
   );
@@ -154,57 +182,80 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
     ),
   );
 
-  const clarity = resolutionClarity(market?.description);
+  const clarity = resolutionClarity(market?.description, market?.resolutionSource);
   checks.push(
     rc(
       "resolution_clarity",
-      clarity.level !== "low",
-      `Resolution clarity ${clarity.level.toUpperCase()}: ${clarity.reason}`,
+      isAsset || clarity.level !== "low",
+      isAsset
+        ? "Spot product — continuous market, no resolution event"
+        : `Resolution clarity ${clarity.level.toUpperCase()}: ${clarity.reason}`,
       blockUnlessExit,
     ),
   );
 
   // ── slippage & fill ─────────────────────────────────────────────────────
-  const slippageEstimate = estimateSlippage(proposal, book);
+  const slippageAbs = estimateSlippage(proposal, book);
+  const slippageEstimate = isAsset && midRef > 0 ? slippageAbs / midRef : slippageAbs;
   const slippageBuffer = settings.slippageBps / 10_000;
+  const slippageBudget = isAsset ? slippageBuffer : Math.max(slippageBuffer, 0.02);
   checks.push(
     rc(
       "slippage",
-      slippageEstimate <= Math.max(slippageBuffer, 0.02),
-      `Estimated slippage ${(slippageEstimate * 100).toFixed(2)}c vs budget ${(Math.max(slippageBuffer, 0.02) * 100).toFixed(2)}c`,
+      slippageEstimate <= slippageBudget,
+      isAsset
+        ? `Estimated slippage ${(slippageEstimate * 100).toFixed(3)}% of mid vs budget ${(slippageBudget * 100).toFixed(2)}%`
+        : `Estimated slippage ${(slippageEstimate * 100).toFixed(2)}c vs budget ${(slippageBudget * 100).toFixed(2)}c`,
       "warn",
       slippageEstimate,
-      Math.max(slippageBuffer, 0.02),
+      slippageBudget,
     ),
   );
   const expectedFillProbability = estimateFillProbability(proposal, book);
 
   // ── edge / EV ───────────────────────────────────────────────────────────
+  // Probability math applies only to binary outcome tokens. Spot assets get
+  // size/exposure discipline instead of an EV model — stated, not hidden.
   const implied = book?.midpoint ?? market?.midpoint ?? entryPrice;
-  const winProb = proposal.winProbability ?? implied;
+  const winProb = isAsset ? 0 : (proposal.winProbability ?? implied);
   const usedImplied = proposal.winProbability === undefined;
-  const grossEdge =
-    proposal.side === "BUY" ? winProb - entryPrice : entryPrice - winProb;
-  const requiredEdge = (spread ?? 0.01) / 2 + feeRate + slippageBuffer;
-  const netEdge = grossEdge - requiredEdge;
+  const grossEdge = isAsset
+    ? 0
+    : proposal.side === "BUY"
+      ? winProb - entryPrice
+      : entryPrice - winProb;
+  const requiredEdge = (spreadEff ?? 0.01) / 2 + feeRate + slippageBuffer;
+  const netEdge = isAsset ? 0 : grossEdge - requiredEdge;
   // EV per share for BUY: q(1-p) - (1-q)p - costs
-  const evPerShare =
-    proposal.side === "BUY"
+  const evPerShare = isAsset
+    ? 0
+    : proposal.side === "BUY"
       ? winProb * (1 - entryPrice) - (1 - winProb) * entryPrice - entryPrice * feeRate
       : grossEdge - entryPrice * feeRate;
   const expectedValueUsd = evPerShare * proposal.size;
-  checks.push(
-    rc(
-      "positive_net_edge",
-      netEdge > 0,
-      usedImplied
-        ? `No win-probability estimate supplied — using market-implied ${(implied * 100).toFixed(1)}%; net edge after costs is ${(netEdge * 100).toFixed(2)}c (market price alone carries no edge)`
-        : `Net edge ${(netEdge * 100).toFixed(2)}c after required ${(requiredEdge * 100).toFixed(2)}c (spread/2 + fees + slippage)`,
-      "warn",
-      netEdge,
-      0,
-    ),
-  );
+  if (isAsset) {
+    checks.push(
+      rc(
+        "ev_model",
+        true,
+        "EV/Kelly are not modeled for spot assets — per-trade caps, exposure limits and loss budgets still apply in full",
+        "warn",
+      ),
+    );
+  } else {
+    checks.push(
+      rc(
+        "positive_net_edge",
+        netEdge > 0,
+        usedImplied
+          ? `No win-probability estimate supplied — using market-implied ${(implied * 100).toFixed(1)}%; net edge after costs is ${(netEdge * 100).toFixed(2)}c (market price alone carries no edge)`
+          : `Net edge ${(netEdge * 100).toFixed(2)}c after required ${(requiredEdge * 100).toFixed(2)}c (spread/2 + fees + slippage)`,
+        "warn",
+        netEdge,
+        0,
+      ),
+    );
+  }
 
   // ── signal quality ──────────────────────────────────────────────────────
   if (exitRelax) {
@@ -341,28 +392,33 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
     );
   }
 
-  // ── Kelly sizing ────────────────────────────────────────────────────────
-  const fullKelly = kellyFraction(winProb, entryPrice);
-  const capped = cappedKelly(
-    winProb,
-    entryPrice,
-    settings.kellyCap,
-    settings.maxTradePct / 100,
-  );
-  const suggestedSizeUsd = usedImplied ? 0 : Math.min(capped * pv, maxTradeUsd);
+  // ── Kelly sizing (binary only) ──────────────────────────────────────────
+  const fullKelly = isAsset ? 0 : kellyFraction(winProb, entryPrice);
+  const capped = isAsset
+    ? 0
+    : cappedKelly(winProb, entryPrice, settings.kellyCap, settings.maxTradePct / 100);
+  const suggestedSizeUsd = usedImplied || isAsset ? 0 : Math.min(capped * pv, maxTradeUsd);
   const suggestedShares =
     entryPrice > 0 ? Math.floor(suggestedSizeUsd / entryPrice) : 0;
 
   const targetPrice =
     proposal.targetPrice ??
-    (proposal.side === "BUY"
-      ? clamp(entryPrice + Math.max(0.05, 2 * requiredEdge), 0.01, 0.99)
-      : clamp(entryPrice - Math.max(0.05, 2 * requiredEdge), 0.01, 0.99));
+    (isAsset
+      ? proposal.side === "BUY"
+        ? entryPrice * 1.05
+        : entryPrice * 0.95
+      : proposal.side === "BUY"
+        ? clamp(entryPrice + Math.max(0.05, 2 * requiredEdge), 0.01, 0.99)
+        : clamp(entryPrice - Math.max(0.05, 2 * requiredEdge), 0.01, 0.99));
   const stopPrice =
     proposal.stopPrice ??
-    (proposal.side === "BUY"
-      ? clamp(entryPrice - 0.1, 0.01, 0.99)
-      : clamp(entryPrice + 0.1, 0.01, 0.99));
+    (isAsset
+      ? proposal.side === "BUY"
+        ? entryPrice * 0.95
+        : entryPrice * 1.05
+      : proposal.side === "BUY"
+        ? clamp(entryPrice - 0.1, 0.01, 0.99)
+        : clamp(entryPrice + 0.1, 0.01, 0.99));
 
   const blockers = checks.filter((c) => c.severity === "block" && !c.passed);
   const warns = checks.filter((c) => c.severity === "warn" && !c.passed);

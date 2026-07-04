@@ -6,6 +6,7 @@
 import type { PortfolioState, PositionRecord, TerminalMode } from "@/lib/types";
 import { demoAccount } from "@/lib/demo/demoData";
 import { fetchUserPositions } from "@/lib/polymarket/dataapi";
+import { venueForToken } from "@/lib/venues/registry";
 import { genId } from "@/lib/utils";
 import { cached } from "./cache";
 import { getMarkets, priceLookup } from "./marketData";
@@ -56,11 +57,14 @@ async function computePaperPortfolio(): Promise<PortfolioState> {
 
   const exposureByMarket: Record<string, number> = {};
   const exposureByCategory: Record<string, number> = {};
+  const exposureByVenue: Record<string, number> = {};
   for (const p of open) {
     const mk = p.conditionId ?? p.tokenId;
     exposureByMarket[mk] = (exposureByMarket[mk] ?? 0) + (p.value ?? 0);
     const cat = p.category ?? "Uncategorized";
     exposureByCategory[cat] = (exposureByCategory[cat] ?? 0) + (p.value ?? 0);
+    const venue = venueForToken(p.tokenId);
+    exposureByVenue[venue] = (exposureByVenue[venue] ?? 0) + (p.value ?? 0);
   }
 
   // realized-trade statistics from SELL fills that carry realized PnL
@@ -111,6 +115,7 @@ async function computePaperPortfolio(): Promise<PortfolioState> {
     positions,
     exposureByMarket,
     exposureByCategory,
+    exposureByVenue,
     realizedPnl: Number(realized.toFixed(2)),
     unrealizedPnl: Number(unrealized.toFixed(2)),
     dailyPnl: Number(dailyPnl.toFixed(2)),
@@ -137,6 +142,7 @@ async function computeLivePortfolio(): Promise<PortfolioState> {
     positions: [],
     exposureByMarket: {},
     exposureByCategory: {},
+    exposureByVenue: {},
     realizedPnl: 0,
     unrealizedPnl: 0,
     dailyPnl: 0,

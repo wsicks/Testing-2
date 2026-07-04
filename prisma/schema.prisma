@@ -298,6 +298,111 @@ model AuditEvent {
   @@map("audit_events")
 }
 
+model Venue {
+  id                 String    @id // polymarket | kalshi | coinbase | coingecko
+  name               String
+  type               String // prediction | regulated_event | crypto_spot | reference
+  enabled            Boolean   @default(true)
+  publicDataEnabled  Boolean   @default(true)
+  privateDataEnabled Boolean   @default(false)
+  paperTradingEnabled Boolean  @default(true)
+  liveTradingEnabled Boolean   @default(false)
+  lastHealthCheck    DateTime?
+  status             String    @default("unknown")
+
+  credentials VenueCredential[]
+  health      VenueHealth[]
+
+  @@map("venues")
+}
+
+model VenueCredential {
+  id                     String    @id @default(cuid())
+  userId                 String?
+  venueId                String
+  credentialType         String // api_key | oauth | signing_key
+  /** reference to an EXTERNAL secret (env var name / vault path) — raw
+   * secrets are never stored in this database */
+  encryptedCredentialRef String
+  scopes                 String[]  @default([])
+  createdAt              DateTime  @default(now())
+  lastUsedAt             DateTime?
+  revokedAt              DateTime?
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("venue_credentials")
+}
+
+model NormalizedMarketRow {
+  id              String    @id // internal key (conditionId / ks:… / cb:…)
+  venueId         String
+  venueMarketId   String
+  ticker          String?
+  title           String
+  category        String?
+  status          String    @default("active")
+  closeTime       DateTime?
+  resolutionRules String?
+  tradable        Boolean   @default(true)
+  referenceOnly   Boolean   @default(false)
+  metadata        Json?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([venueId])
+  @@map("normalized_markets")
+}
+
+model CrossVenueLink {
+  id             String   @id @default(cuid())
+  sourceVenueId  String
+  sourceMarketId String
+  targetVenueId  String
+  targetMarketId String
+  matchScore     Float
+  matchStatus    String
+  ruleComparison Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([sourceMarketId])
+  @@index([targetMarketId])
+  @@map("cross_venue_links")
+}
+
+model ReferencePriceRow {
+  id          String   @id @default(cuid())
+  source      String
+  symbol      String
+  price       Float
+  bid         Float?
+  ask         Float?
+  volume      Float?
+  timestamp   DateTime
+  freshnessMs Int
+
+  @@index([source, symbol, timestamp])
+  @@map("reference_prices")
+}
+
+model VenueHealth {
+  id                 String   @id @default(cuid())
+  venueId            String
+  restStatus         String   @default("unknown")
+  websocketStatus    String   @default("unknown")
+  latencyP50         Float?
+  latencyP95         Float?
+  latencyP99         Float?
+  errorRate          Float?
+  rateLimitRemaining Int?
+  lastUpdated        DateTime @default(now())
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@index([venueId, lastUpdated])
+  @@map("venue_health")
+}
+
 model AppSetting {
   id        String   @id @default(cuid())
   userId    String?

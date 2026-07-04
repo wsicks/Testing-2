@@ -10,6 +10,33 @@ export const CLOB_WS_URL =
   process.env.NEXT_PUBLIC_CLOB_WS_URL ??
   "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
+// ── Multi-venue endpoints (official public APIs only — never scraped) ────────
+export const KALSHI_API_URL =
+  process.env.KALSHI_API_URL ?? "https://api.elections.kalshi.com/trade-api/v2";
+/** Kalshi demo/sandbox environment — separate host, separate credentials */
+export const KALSHI_DEMO_API_URL =
+  process.env.KALSHI_DEMO_API_URL ?? "https://demo-api.kalshi.co/trade-api/v2";
+export const COINBASE_API_URL =
+  process.env.COINBASE_API_URL ?? "https://api.coinbase.com/api/v3/brokerage";
+export const COINGECKO_API_URL =
+  process.env.COINGECKO_API_URL ?? "https://api.coingecko.com/api/v3";
+
+/** curated liquid Coinbase spot products served as reference/charting markets */
+export const COINBASE_PRODUCTS = (
+  process.env.COINBASE_PRODUCTS ?? "BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+/** CoinGecko ids tracked as reference prices */
+export const COINGECKO_IDS = (
+  process.env.COINGECKO_IDS ?? "bitcoin,ethereum,solana"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 export const APP_NAME = "POLYQUANT";
 
 /**
@@ -61,6 +88,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   scannersEnabled: true,
   paperStartingCash: 10_000,
   autopilot: DEFAULT_AUTOPILOT,
+  // public data on; paper on; live LOCKED — independently per venue
+  venues: {
+    polymarket: { publicData: true, paperTrading: true, liveEnabled: false },
+    kalshi: { publicData: true, paperTrading: true, liveEnabled: false },
+    coinbase: { publicData: true, paperTrading: true, liveEnabled: false },
+    coingecko: { publicData: true },
+  },
 };
 
 /** how many EVENTS the scanner pulls from Gamma per refresh (each event

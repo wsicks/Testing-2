@@ -3,7 +3,7 @@
 // Order book ladder + recent trades for the selected market.
 
 import type { OrderBookData, RecentTrade } from "@/lib/types";
-import { fmtCents, fmtNum, fmtTime } from "@/lib/format";
+import { fmtNum, fmtPrice, fmtTime } from "@/lib/format";
 import { Num } from "@/components/ui/num";
 import { Badge } from "@/components/ui/badge";
 import { EmptyNote } from "@/components/ui/spinner";
@@ -11,9 +11,11 @@ import { EmptyNote } from "@/components/ui/spinner";
 export function BookLadder({
   book,
   levels = 8,
+  outcomeType = "binary",
 }: {
   book?: OrderBookData;
   levels?: number;
+  outcomeType?: "binary" | "asset";
 }) {
   if (!book) return <EmptyNote>no book data</EmptyNote>;
   const asks = book.asks.slice(0, levels).reverse();
@@ -41,7 +43,7 @@ export function BookLadder({
             className="absolute inset-y-0 right-0 bg-neg-soft"
             style={{ width: `${(l.size / maxSize) * 100}%` }}
           />
-          <Num tone="neg" className="relative">{fmtCents(l.price)}</Num>
+          <Num tone="neg" className="relative">{fmtPrice(l.price, outcomeType)}</Num>
           <Num className="relative text-right">{fmtNum(l.size)}</Num>
           <Num className="relative text-right text-ink-faint">
             {fmtNum(l.price * l.size)}
@@ -51,10 +53,10 @@ export function BookLadder({
       <div className="my-0.5 flex items-center justify-between border-y border-line bg-paper px-1 py-0.5">
         <span className="label">spread</span>
         <Num tone={book.spread !== undefined && book.spread > 0.03 ? "warn" : undefined}>
-          {fmtCents(book.spread)}
+          {fmtPrice(book.spread, outcomeType)}
         </Num>
         <span className="label">mid</span>
-        <Num>{fmtCents(book.midpoint)}</Num>
+        <Num>{fmtPrice(book.midpoint, outcomeType)}</Num>
       </div>
       {bids.map((l, i) => (
         <div key={`b${i}`} className="relative grid grid-cols-3 py-px">
@@ -62,7 +64,7 @@ export function BookLadder({
             className="absolute inset-y-0 right-0 bg-pos-soft"
             style={{ width: `${(l.size / maxSize) * 100}%` }}
           />
-          <Num tone="pos" className="relative">{fmtCents(l.price)}</Num>
+          <Num tone="pos" className="relative">{fmtPrice(l.price, outcomeType)}</Num>
           <Num className="relative text-right">{fmtNum(l.size)}</Num>
           <Num className="relative text-right text-ink-faint">
             {fmtNum(l.price * l.size)}
@@ -73,7 +75,13 @@ export function BookLadder({
   );
 }
 
-export function TradesList({ trades }: { trades: RecentTrade[] }) {
+export function TradesList({
+  trades,
+  outcomeType = "binary",
+}: {
+  trades: RecentTrade[];
+  outcomeType?: "binary" | "asset";
+}) {
   if (!trades.length) return <EmptyNote>no recent trades reported</EmptyNote>;
   return (
     <div className="max-h-48 overflow-y-auto text-2xs">
@@ -89,7 +97,7 @@ export function TradesList({ trades }: { trades: RecentTrade[] }) {
           <Num tone={t.side === "BUY" ? "pos" : "neg"}>
             {t.side} {t.outcome ?? ""}
           </Num>
-          <Num className="text-right">{fmtCents(t.price)}</Num>
+          <Num className="text-right">{fmtPrice(t.price, outcomeType)}</Num>
           <Num className="text-right">{fmtNum(t.size)}</Num>
         </div>
       ))}

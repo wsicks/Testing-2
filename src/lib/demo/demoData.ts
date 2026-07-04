@@ -34,6 +34,11 @@ export function mockMarkets(now = Date.now()): NormalizedMarket[] {
     const spread = 0.005 + rand() * 0.03;
     return {
       conditionId: `0xmock${i}`,
+      venueId: "polymarket" as const,
+      venueMarketId: `0xmock${i}`,
+      outcomeType: "binary" as const,
+      tradable: true,
+      referenceOnly: false,
       question: d.q,
       eventTitle: d.q.replace("MOCK: ", "MOCK EVENT: "),
       description:
@@ -230,6 +235,7 @@ export function demoAccount(markets: NormalizedMarket[], now = Date.now()): Demo
     positions,
     exposureByMarket,
     exposureByCategory,
+    exposureByVenue: { polymarket: Number(positionsValue.toFixed(2)) },
     realizedPnl: Number(realized.toFixed(2)),
     unrealizedPnl: Number(unrealized.toFixed(2)),
     dailyPnl: Number((equity - equitySeries[equitySeries.length - 2].equity).toFixed(2)),

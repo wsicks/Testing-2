@@ -9,6 +9,11 @@ import type {
 export function makeMarket(overrides: Partial<NormalizedMarket> = {}): NormalizedMarket {
   return {
     conditionId: "0xcond1",
+    venueId: "polymarket",
+    venueMarketId: "0xcond1",
+    outcomeType: "binary",
+    tradable: true,
+    referenceOnly: false,
     question: "Will the test market resolve yes?",
     description:
       "This market will resolve to 'Yes' if the test condition is met according to the official resolution source, the Example Bureau of Testing. Otherwise it will resolve to 'No'.",
@@ -79,6 +84,7 @@ export function makePortfolio(overrides: Partial<PortfolioState> = {}): Portfoli
     positions: [],
     exposureByMarket: {},
     exposureByCategory: {},
+    exposureByVenue: {},
     realizedPnl: 0,
     unrealizedPnl: 0,
     dailyPnl: 0,

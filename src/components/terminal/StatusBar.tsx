@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAutopilot, useHealth, usePortfolio, useSettings } from "@/hooks/api";
+import { useAutopilot, useHealth, usePortfolio, useSettings, useSources } from "@/hooks/api";
 import { useFeed } from "@/hooks/useFeed";
 import { useTerminal } from "@/store/terminal";
 import { fmtAgo, fmtUsd, shortAddr } from "@/lib/format";
@@ -35,6 +35,7 @@ export function StatusBar() {
   const { data: settings } = useSettings();
   const { data: pf } = usePortfolio(mode);
   const { data: ap } = useAutopilot();
+  const { data: sources } = useSources();
   const { status: streamStatus } = useFeed(1);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -58,11 +59,19 @@ export function StatusBar() {
       ) : null}
       <Item label="wallet">{wallet ? shortAddr(wallet) : "—"}</Item>
       <div className="flex items-center gap-1">
-        <span className="label">api</span>
-        <Dot ok={health?.gamma.ok} />
-        <span className="label">gamma</span>
-        <Dot ok={health?.clob.ok} />
-        <span className="label">clob</span>
+        <span className="label">venues</span>
+        {(["polymarket", "kalshi", "coinbase", "coingecko"] as const).map((v) => {
+          const s = sources?.sources.find((x) => x.venueId === v);
+          const ok =
+            s?.lastSuccessAt !== undefined &&
+            (s.lastFailureAt === undefined || s.lastSuccessAt > s.lastFailureAt);
+          return (
+            <span key={v} className="flex items-center gap-0.5" title={`${v}: ${s?.freshnessMs !== undefined ? Math.round(s.freshnessMs / 1000) + "s fresh" : "no data yet"}${s?.dataClass === "reference" ? " (reference-only)" : ""}`}>
+              <Dot ok={s?.requests ? ok : undefined} />
+              <span className="label">{v === "polymarket" ? "pm" : v === "kalshi" ? "ks" : v === "coinbase" ? "cb" : "cg"}</span>
+            </span>
+          );
+        })}
       </div>
       <div className="flex items-center gap-1">
         <span className="label">stream</span>

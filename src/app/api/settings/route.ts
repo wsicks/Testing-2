@@ -35,6 +35,24 @@ const patchSchema = z
       .regex(/^0x[a-fA-F0-9]{40}$/)
       .or(z.literal(""))
       .optional(),
+    venues: z.object({
+      polymarket: z.object({
+        publicData: z.boolean(),
+        paperTrading: z.boolean(),
+        liveEnabled: z.boolean(),
+      }),
+      kalshi: z.object({
+        publicData: z.boolean(),
+        paperTrading: z.boolean(),
+        liveEnabled: z.boolean(),
+      }),
+      coinbase: z.object({
+        publicData: z.boolean(),
+        paperTrading: z.boolean(),
+        liveEnabled: z.boolean(),
+      }),
+      coingecko: z.object({ publicData: z.boolean() }),
+    }),
     autopilot: z.object({
       mode: z.enum(["off", "observe", "paper", "live"]),
       enabledStrategies: z.array(z.string()).max(20),

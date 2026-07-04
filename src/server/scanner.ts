@@ -8,12 +8,21 @@ import {
   SCANNER_BOOK_LIMIT,
 } from "@/lib/constants";
 import { runAllStrategies } from "@/lib/engine/signals/registry";
-import type { OrderBookData, RecentTrade, SignalResult } from "@/lib/types";
+import { parseCryptoThreshold } from "@/lib/engine/crossvenue/threshold";
+import type { OrderBookData, RecentTrade, SignalContext, SignalResult } from "@/lib/types";
 import { audit } from "./audit";
 import { autopilotTick } from "./autopilot";
+import { getCrossVenueLinks } from "./crossVenue";
 import { publishFeed } from "./events";
 import { measure, measureSync, recordLatency } from "./perf";
-import { getBook, getHistory, getMarkets, getTrades } from "./marketData";
+import {
+  getBook,
+  getHistory,
+  getMarkets,
+  getRealizedVolDaily,
+  getSpotRef,
+  getTrades,
+} from "./marketData";
 import { maybeSnapshotPortfolio } from "./portfolio";
 import { settleOpenOrders } from "./execution";
 import { getStore } from "./store";
@@ -103,6 +112,33 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       }
     }
 
+    // cross-venue enrichment: links (cached 60s) + fresh Coinbase reference
+    // spot/vol for every product referenced by a crypto-threshold market
+    const crossLinks = await getCrossVenueLinks().catch(() => []);
+    const refProducts = new Set<string>();
+    for (const m of markets) {
+      if (m.outcomeType !== "binary") continue;
+      const th = parseCryptoThreshold(m.question, m.endDate);
+      if (th?.coinbaseProduct) refProducts.add(th.coinbaseProduct);
+    }
+    const spotRefs = new Map<string, NonNullable<SignalContext["reference"]>>();
+    for (const product of [...refProducts].slice(0, 8)) {
+      const spot = await getSpotRef(product).catch(() => undefined);
+      if (!spot) continue;
+      const vol = await getRealizedVolDaily(product).catch(() => undefined);
+      spotRefs.set(product, {
+        spot: spot.price,
+        spotSource: `coinbase:${product}`,
+        spotFreshnessMs: Date.now() - spot.ts,
+        realizedVolDaily: vol,
+      });
+    }
+    const referenceFor = (m: (typeof markets)[number]) => {
+      if (m.outcomeType !== "binary") return undefined;
+      const th = parseCryptoThreshold(m.question, m.endDate);
+      return th?.coinbaseProduct ? spotRefs.get(th.coinbaseProduct) : undefined;
+    };
+
     // dedupe: skip signals repeated for the same strategy+market within 10 min
     const recent = await store.listSignals({ limit: 400 });
     const seen = new Set(
@@ -124,6 +160,8 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
           history: histories.get(m.conditionId),
           trades: tapes.get(m.conditionId),
           relatedMarkets: m.volume24h >= 10_000 ? markets : undefined,
+          reference: referenceFor(m),
+          crossLinks,
           settings,
           now,
         }),

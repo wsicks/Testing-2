@@ -4,12 +4,13 @@
 // order ticket, execution cycle, and the explainable decision tree — all
 // driven by the same detail query + ticket state.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { useMarketDetail } from "@/hooks/api";
+import { useCandles, useMarketDetail } from "@/hooks/api";
 import { useClobWs } from "@/hooks/useClobWs";
 import { computeMicroMetrics } from "@/lib/engine/micro/microstructure";
-import { fmtCents, fmtDateTime, fmtTimeUntil, fmtUsd } from "@/lib/format";
+import { parseCryptoThreshold } from "@/lib/engine/crossvenue/threshold";
+import { fmtCents, fmtDateTime, fmtPrice, fmtTimeUntil, fmtUsd } from "@/lib/format";
 import { Panel } from "@/components/ui/panel";
 import { Badge } from "@/components/ui/badge";
 import { Num } from "@/components/ui/num";
@@ -25,6 +26,11 @@ const DecisionTree = dynamic(
   () => import("./DecisionTree").then((m) => m.DecisionTree),
   { ssr: false, loading: () => <Panel title="strategy decision tree"><EmptyNote>loading…</EmptyNote></Panel> },
 );
+// Lightweight Charts touches window — client-only
+const LwChart = dynamic(() => import("./LwChart").then((m) => m.LwChart), {
+  ssr: false,
+  loading: () => <EmptyNote>loading chart…</EmptyNote>,
+});
 
 const INTERVALS = ["1d", "1w", "1m", "max"] as const;
 
@@ -39,11 +45,49 @@ export function MarketWorkspace({
   const { data, isLoading } = useMarketDetail(conditionId, interval);
   const [ticket, setTicket] = useState<TicketState>({ previewing: false });
   const m = data?.market;
-  // live book deltas straight from the public CLOB websocket (falls back to
-  // the polled snapshot if the socket can't connect)
-  const { book: liveBook, wsStatus } = useClobWs(m?.yesTokenId);
+  const isAsset = m?.outcomeType === "asset";
+  // live book deltas straight from the public CLOB websocket — Polymarket
+  // tokens only (Kalshi/Coinbase stream support is polled REST for now)
+  const { book: liveBook, wsStatus } = useClobWs(
+    m?.venueId === "polymarket" ? m?.yesTokenId : undefined,
+  );
   const yesBook = liveBook ?? data?.yesBook;
-  const micro = yesBook ? computeMicroMetrics(yesBook, data?.trades ?? []) : null;
+  const micro =
+    yesBook && !isAsset ? computeMicroMetrics(yesBook, data?.trades ?? []) : null;
+
+  // crypto-linked event market → Coinbase spot overlay + threshold line
+  const threshold = useMemo(
+    () => (m && !isAsset ? parseCryptoThreshold(m.question, m.endDate) : null),
+    [m, isAsset],
+  );
+  const { data: assetCandles } = useCandles(
+    isAsset ? m?.conditionId : undefined,
+    60,
+    7 * 86_400,
+  );
+  const { data: overlayCandles } = useCandles(
+    threshold?.coinbaseProduct ? `cb:${threshold.coinbaseProduct}` : undefined,
+    60,
+    7 * 86_400,
+  );
+  const probCandles = useMemo(
+    () =>
+      (data?.history ?? []).map((p) => ({ t: p.t, o: p.p, h: p.p, l: p.p, c: p.p, v: 0 })),
+    [data?.history],
+  );
+  const spotOverlay = useMemo(
+    () =>
+      overlayCandles?.candles.length
+        ? [
+            {
+              label: `Coinbase ${threshold?.coinbaseProduct} (reference)`,
+              color: "#b45309",
+              points: overlayCandles.candles.map((c) => ({ t: c.t, v: c.c })),
+            },
+          ]
+        : [],
+    [overlayCandles, threshold?.coinbaseProduct],
+  );
 
   if (!conditionId) {
     return (
@@ -72,6 +116,10 @@ export function MarketWorkspace({
               {isLoading ? <Spinner /> : null}
               {m ? (
                 <>
+                  <Badge variant={m.venueId === "polymarket" ? "accent" : m.venueId === "kalshi" ? "pos" : "warn"}>
+                    {m.venueId}
+                  </Badge>
+                  {m.referenceOnly ? <Badge variant="warn">reference-only</Badge> : null}
                   <Badge
                     variant={
                       m.tradability === "tradable"
@@ -83,14 +131,14 @@ export function MarketWorkspace({
                   >
                     {m.riskGrade} · {m.tradability}
                   </Badge>
-                  {data?.polymarketUrl ? (
+                  {(data?.polymarketUrl ?? m.sourceUrl) ? (
                     <a
-                      href={data.polymarketUrl}
+                      href={data?.polymarketUrl ?? m.sourceUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="text-2xs text-accent hover:underline"
                     >
-                      polymarket ↗
+                      {m.venueId} ↗
                     </a>
                   ) : null}
                 </>
@@ -100,14 +148,17 @@ export function MarketWorkspace({
           bodyClassName="p-0"
         >
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-paper px-2 py-1 text-2xs">
-            <Stat label="yes" v={fmtCents(m?.yesPrice)} />
-            <Stat label="no" v={fmtCents(m?.noPrice)} />
-            <Stat label="bid" v={fmtCents(m?.bestBid)} tone="pos" />
-            <Stat label="ask" v={fmtCents(m?.bestAsk)} tone="neg" />
-            <Stat label="spread" v={fmtCents(m?.spread)} />
+            <Stat label={isAsset ? "price" : "yes"} v={fmtPrice(m?.yesPrice, m?.outcomeType)} />
+            {!isAsset ? <Stat label="no" v={fmtPrice(m?.noPrice, m?.outcomeType)} /> : null}
+            <Stat label="bid" v={fmtPrice(yesBook?.bestBid ?? m?.bestBid, m?.outcomeType)} tone="pos" />
+            <Stat label="ask" v={fmtPrice(yesBook?.bestAsk ?? m?.bestAsk, m?.outcomeType)} tone="neg" />
+            <Stat label="spread" v={fmtPrice(yesBook?.spread ?? m?.spread, m?.outcomeType)} />
             <Stat label="liquidity" v={fmtUsd(m?.liquidity, 0)} />
             <Stat label="vol 24h" v={fmtUsd(m?.volume24h, 0)} />
-            <Stat label="closes" v={`${fmtTimeUntil(m?.endDate)} (${fmtDateTime(m?.endDate)})`} />
+            <Stat
+              label="closes"
+              v={isAsset ? "continuous" : `${fmtTimeUntil(m?.endDate)} (${fmtDateTime(m?.endDate)})`}
+            />
             <div className="ml-auto flex gap-0.5">
               {INTERVALS.map((i) => (
                 <Button
@@ -122,7 +173,31 @@ export function MarketWorkspace({
             </div>
           </div>
           <div className="p-1">
-            {data?.history?.length ? (
+            {isAsset ? (
+              assetCandles?.candles.length ? (
+                <LwChart
+                  candles={assetCandles.candles}
+                  mode="candles"
+                  height={full ? 280 : 220}
+                />
+              ) : (
+                <EmptyNote>loading candles…</EmptyNote>
+              )
+            ) : threshold && probCandles.length ? (
+              <>
+                <LwChart
+                  candles={probCandles}
+                  mode="probability"
+                  overlays={spotOverlay}
+                  threshold={undefined}
+                  height={full ? 280 : 220}
+                />
+                <div className="px-1 pt-0.5 text-3xs text-ink-faint">
+                  probability (left, blue) vs Coinbase {threshold.coinbaseProduct} spot
+                  (right, amber, reference-only) — threshold ${threshold.threshold.toLocaleString()} {threshold.direction}
+                </div>
+              </>
+            ) : data?.history?.length ? (
               <PriceChart history={data.history} height={full ? 260 : 200} />
             ) : (
               <EmptyNote>no price history</EmptyNote>
@@ -144,7 +219,7 @@ export function MarketWorkspace({
               )
             }
           >
-            <BookLadder book={yesBook} />
+            <BookLadder book={yesBook} outcomeType={m?.outcomeType} />
           </Panel>
           <Panel title="depth & microstructure" bodyClassName="p-1">
             {yesBook ? (
@@ -200,7 +275,7 @@ export function MarketWorkspace({
             </div>
           </Panel>
           <Panel title="recent trades" bodyClassName="p-1.5">
-            <TradesList trades={data?.trades ?? []} />
+            <TradesList trades={data?.trades ?? []} outcomeType={m?.outcomeType} />
           </Panel>
         </div>
 

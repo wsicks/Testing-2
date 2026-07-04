@@ -32,7 +32,7 @@ export function gradeMarket(m: NormalizedMarket, maxSpread = 0.03): MarketGrade 
   else if (m.volume24h >= 5_000) score += 1;
   else factors.push("low volume");
 
-  const clarity = resolutionClarity(m.description);
+  const clarity = resolutionClarity(m.description, m.resolutionSource);
   if (clarity.level === "high") score += 2;
   else if (clarity.level === "medium") score += 1;
   else factors.push("unclear resolution rules");

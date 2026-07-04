@@ -18,6 +18,8 @@ import {
   matchOrder,
 } from "@/lib/engine/execution/paperEngine";
 import { genId } from "@/lib/utils";
+import { venueForToken } from "@/lib/venues/registry";
+import type { VenueId } from "@/lib/types";
 import { audit } from "./audit";
 import { getExposure, invalidateExposure } from "./hotpath/exposure";
 import { getBook, getMarketByCondition, getMarketByToken } from "./marketData";
@@ -50,11 +52,14 @@ export interface PlaceOrderResult {
 }
 
 async function marketContext(body: PlaceOrderBody) {
-  // O(1) registry lookups; the book is served from the in-memory TTL cache
+  // O(1) registry lookups; the book is served from the in-memory TTL cache.
+  // Book failures fail CLOSED: the risk engine blocks on "Spread unavailable".
   const market = body.conditionId
     ? await getMarketByCondition(body.conditionId)
     : await getMarketByToken(body.tokenId);
-  const book = await getBook(body.tokenId, market?.midpoint ?? 0.5);
+  const book = await getBook(body.tokenId, market?.midpoint ?? 0.5).catch(
+    () => undefined,
+  );
   return { market, book };
 }
 
@@ -140,6 +145,21 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
     evaluateTrade({ proposal, portfolio, settings, market, book }),
   );
 
+  // per-venue paper-trading gate — venue flags never leak across venues
+  const venue = venueForToken(body.tokenId);
+  const venueCfg = settings.venues[venue as Exclude<VenueId, "coingecko">];
+  if (body.mode === "paper" && venueCfg && !venueCfg.paperTrading && !body.isExit) {
+    assessment.approved = false;
+    const reason = `BLOCKED — venue_paper_disabled: paper trading for ${venue} is disabled in Settings`;
+    assessment.reasons.unshift(reason);
+    assessment.checks.unshift({
+      name: "venue_paper_enabled",
+      passed: false,
+      detail: reason,
+      severity: "block",
+    });
+  }
+
   if (!assessment.approved) {
     await audit(
       "risk",
@@ -183,8 +203,11 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
     { data: { orderId: order.id, mode: body.mode, origin: body.origin ?? "manual" }, feedType: "order_submitted" },
   );
 
-  // immediate match attempt against the current book
-  const { order: matched, fills } = matchOrder(order, book, settings.feeRateBps, now);
+  // immediate match attempt against the current book (no book → rest open;
+  // settlement retries once the venue book is reachable again)
+  const { order: matched, fills } = book
+    ? matchOrder(order, book, settings.feeRateBps, now)
+    : { order, fills: [] };
   order = matched;
   if (order.status === "created") order = { ...order, status: "open" };
 
@@ -297,7 +320,10 @@ export async function cancelAllOrders(mode: "paper" | "demo"): Promise<number> {
 
 // ── live trading gate & intents ────────────────────────────────────────────
 
-export function liveGate(settings: AppSettings): { allowed: boolean; reasons: string[] } {
+export function liveGate(
+  settings: AppSettings,
+  venue: VenueId = "polymarket",
+): { allowed: boolean; reasons: string[] } {
   const reasons: string[] = [];
   if (process.env.LIVE_TRADING_ENABLED !== "true")
     reasons.push("LIVE_TRADING_ENABLED is not set to true on the server");
@@ -306,6 +332,14 @@ export function liveGate(settings: AppSettings): { allowed: boolean; reasons: st
   if (!settings.termsAcceptedAt)
     reasons.push("Eligibility & terms acknowledgment has not been completed");
   if (settings.killSwitch) reasons.push("Kill switch is engaged");
+  // per-venue live flag — enabling one venue NEVER enables another
+  if (venue === "coingecko") {
+    reasons.push("CoinGecko is a reference-only source and can never trade");
+  } else {
+    const vc = settings.venues[venue];
+    if (!vc?.liveEnabled)
+      reasons.push(`Live trading for ${venue} has not been enabled (per-venue flag in Settings)`);
+  }
   return { allowed: reasons.length === 0, reasons };
 }
 
@@ -316,7 +350,7 @@ export async function createLiveIntent(body: PlaceOrderBody): Promise<{
 }> {
   const store = await getStore();
   const settings = await store.getSettings();
-  const gate = liveGate(settings);
+  const gate = liveGate(settings, venueForToken(body.tokenId));
   const { market, book } = await marketContext(body);
   // live path: never evaluate on stale exposure — block until refreshed
   const exposure = await getExposure("live", {
@@ -390,7 +424,7 @@ export async function confirmLiveIntent(
   if (intent.status !== "previewed" && intent.status !== "approval_required") {
     throw new Error(`Intent is ${intent.status} — cannot confirm`);
   }
-  const gate = liveGate(settings);
+  const gate = liveGate(settings, venueForToken(intent.tokenId));
   if (!gate.allowed) {
     const next: LiveOrderIntent = {
       ...intent,
@@ -436,10 +470,11 @@ export async function confirmLiveIntent(
     { data: { intentId: id, autopilot: Boolean(opts.autopilotArmed) }, feedType: "user_action" },
   );
 
-  // hand off to the CLOB adapter (bring-your-own credentials)
+  // hand off to the OWNING venue's execution adapter — execution logic is
+  // never shared across venues
   try {
-    const { submitLiveOrder } = await import("./liveAdapter");
-    const res = await submitLiveOrder(next);
+    const venue = venueForToken(next.tokenId);
+    const res = await submitByVenue(venue, next);
     next = {
       ...next,
       status: "submitted",
@@ -464,6 +499,47 @@ export async function confirmLiveIntent(
   return next;
 }
 
+async function submitByVenue(
+  venue: VenueId,
+  intent: LiveOrderIntent,
+): Promise<{ orderId: string }> {
+  switch (venue) {
+    case "polymarket": {
+      const { submitLiveOrder } = await import("./liveAdapter");
+      return submitLiveOrder(intent);
+    }
+    case "kalshi": {
+      const { submitKalshiOrder } = await import("./kalshiLive");
+      return submitKalshiOrder(intent);
+    }
+    case "coinbase": {
+      const { submitCoinbaseOrder } = await import("./coinbaseLive");
+      return submitCoinbaseOrder(intent);
+    }
+    default:
+      throw new Error(`venue ${venue} cannot execute orders`);
+  }
+}
+
+async function cancelByVenue(venue: VenueId, upstreamId: string): Promise<void> {
+  switch (venue) {
+    case "polymarket": {
+      const { cancelLiveOrder } = await import("./liveAdapter");
+      return cancelLiveOrder(upstreamId);
+    }
+    case "kalshi": {
+      const { cancelKalshiOrder } = await import("./kalshiLive");
+      return cancelKalshiOrder(upstreamId);
+    }
+    case "coinbase": {
+      const { cancelCoinbaseOrder } = await import("./coinbaseLive");
+      return cancelCoinbaseOrder(upstreamId);
+    }
+    default:
+      return;
+  }
+}
+
 export async function cancelIntent(id: string): Promise<LiveOrderIntent | undefined> {
   const store = await getStore();
   const intent = await store.getIntent(id);
@@ -473,10 +549,9 @@ export async function cancelIntent(id: string): Promise<LiveOrderIntent | undefi
   const next: LiveOrderIntent = { ...intent, status: "canceled", updatedAt: Date.now() };
   if (intent.clobOrderId) {
     try {
-      const { cancelLiveOrder } = await import("./liveAdapter");
-      await cancelLiveOrder(intent.clobOrderId);
+      await cancelByVenue(venueForToken(intent.tokenId), intent.clobOrderId);
     } catch (err) {
-      next.error = `cancel sent locally; CLOB cancel failed: ${err instanceof Error ? err.message : "unknown"}`;
+      next.error = `cancel sent locally; venue cancel failed: ${err instanceof Error ? err.message : "unknown"}`;
     }
   }
   await store.updateIntent(next);

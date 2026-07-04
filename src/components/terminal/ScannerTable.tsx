@@ -16,7 +16,7 @@ import {
   type ScannerRow,
 } from "@/hooks/api";
 import { useTerminal } from "@/store/terminal";
-import { fmtCents, fmtSignedPct, fmtTimeUntil, fmtUsd } from "@/lib/format";
+import { fmtPrice, fmtSignedPct, fmtTimeUntil, fmtUsd } from "@/lib/format";
 import { Panel } from "@/components/ui/panel";
 import { Badge } from "@/components/ui/badge";
 import { Num } from "@/components/ui/num";
@@ -27,10 +27,11 @@ import { cn } from "@/lib/utils";
 import { Star } from "lucide-react";
 
 const GRID =
-  "18px minmax(180px,2.2fr) 52px 52px 52px 52px 52px 48px 62px 66px 58px 56px 36px 34px 72px";
+  "18px 44px minmax(170px,2.2fr) 56px 52px 56px 56px 56px 48px 62px 66px 58px 56px 36px 34px 72px";
 
 const HEADERS: { label: string; sortable?: string }[] = [
   { label: "" },
+  { label: "venue" },
   { label: "market" },
   { label: "yes" },
   { label: "no" },
@@ -80,6 +81,13 @@ const Row = memo(function Row({
           className={m.watchlisted ? "fill-warn text-warn" : "text-line-strong hover:text-warn"}
         />
       </button>
+      <Badge
+        variant={m.venueId === "polymarket" ? "accent" : m.venueId === "kalshi" ? "pos" : "warn"}
+        className="justify-center"
+        title={m.referenceOnly ? "reference-only" : "tradable venue data"}
+      >
+        {m.venueId === "polymarket" ? "PM" : m.venueId === "kalshi" ? "KS" : "CB"}
+      </Badge>
       <div className="min-w-0 pr-1">
         <div className="truncate" title={m.question}>
           <Link
@@ -95,13 +103,19 @@ const Row = memo(function Row({
           {m.isNew ? <span className="ml-1 text-accent">new</span> : null}
         </div>
       </div>
-      <Num>{fmtCents(m.yesPrice)}</Num>
-      <Num>{fmtCents(m.noPrice)}</Num>
-      <Num>{fmtCents(m.midpoint)}</Num>
-      <Num tone="pos">{fmtCents(m.bestBid)}</Num>
-      <Num tone="neg">{fmtCents(m.bestAsk)}</Num>
-      <Num tone={m.spread !== undefined && m.spread > 0.03 ? "warn" : undefined}>
-        {fmtCents(m.spread)}
+      <Num>{fmtPrice(m.yesPrice, m.outcomeType)}</Num>
+      <Num>{m.outcomeType === "asset" ? "—" : fmtPrice(m.noPrice, m.outcomeType)}</Num>
+      <Num>{fmtPrice(m.midpoint, m.outcomeType)}</Num>
+      <Num tone="pos">{fmtPrice(m.bestBid, m.outcomeType)}</Num>
+      <Num tone="neg">{fmtPrice(m.bestAsk, m.outcomeType)}</Num>
+      <Num
+        tone={
+          m.outcomeType === "binary" && m.spread !== undefined && m.spread > 0.03
+            ? "warn"
+            : undefined
+        }
+      >
+        {fmtPrice(m.spread, m.outcomeType, 1)}
       </Num>
       <Num>{fmtUsd(m.liquidity, 0)}</Num>
       <Num>{fmtUsd(m.volume24h, 0)}</Num>
@@ -197,6 +211,16 @@ export function ScannerTable({
             onChange={(e) => setSearch(e.target.value)}
           />
           <Select
+            className="w-28"
+            value={filters.venue ?? ""}
+            onChange={(e) => set({ venue: e.target.value || undefined })}
+          >
+            <option value="">all venues</option>
+            <option value="polymarket">Polymarket</option>
+            <option value="kalshi">Kalshi</option>
+            <option value="coinbase">Coinbase</option>
+          </Select>
+          <Select
             className="w-32"
             value={filters.tag ?? ""}
             onChange={(e) => set({ tag: e.target.value || undefined })}
@@ -274,6 +298,7 @@ export function ScannerTable({
               ["newOnly", "new"],
               ["highMovement", "movers"],
               ["watchlistOnly", "watchlist"],
+              ["tradableOnly", "tradable only"],
             ] as const
           ).map(([key, label]) => (
             <Button

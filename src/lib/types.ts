@@ -2,6 +2,66 @@
 
 export type TerminalMode = "demo" | "paper" | "live";
 
+// ── Venues ────────────────────────────────────────────────────────────────────
+
+export type VenueId = "polymarket" | "kalshi" | "coinbase" | "coingecko";
+
+export interface VenueCapabilities {
+  publicData: boolean;
+  orderBooks: boolean;
+  candles: boolean;
+  trades: boolean;
+  paperTrading: boolean;
+  /** live adapter exists (still locked behind per-venue gates) */
+  liveTrading: boolean;
+  /** reference-only source — can never execute anything */
+  referenceOnly: boolean;
+}
+
+/** transparency record every external data source must expose */
+export interface SourceStatus {
+  venueId: VenueId;
+  name: string;
+  licenseNote: string;
+  updateFrequency: string;
+  rateLimitNote: string;
+  dataClass: "tradable" | "reference" | "delayed" | "estimated";
+  requests: number;
+  failures: number;
+  lastSuccessAt?: number;
+  lastFailureAt?: number;
+  lastError?: string;
+  /** ms since last successful fetch; undefined = never succeeded */
+  freshnessMs?: number;
+}
+
+export interface NormalizedCandle {
+  /** epoch seconds, bar open */
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface ReferencePrice {
+  source: VenueId;
+  symbol: string;
+  price: number;
+  change24hPct?: number;
+  volume24h?: number;
+  ts: number;
+  freshnessMs: number;
+}
+
+export interface VenueSettings {
+  publicData: boolean;
+  paperTrading: boolean;
+  /** per-venue live opt-in — enabling one venue NEVER enables another */
+  liveEnabled: boolean;
+}
+
 // ── Markets ───────────────────────────────────────────────────────────────────
 
 export interface MarketOutcome {
@@ -11,13 +71,24 @@ export interface MarketOutcome {
 }
 
 export interface NormalizedMarket {
+  /**
+   * universal internal market key. Polymarket keeps its raw conditionId for
+   * backward compatibility; other venues use a prefixed id (ks:TICKER,
+   * cb:BTC-USD) so keys never collide across venues.
+   */
   conditionId: string;
+  venueId: VenueId;
+  /** the venue's native identifier (condition id, ticker, product id) */
+  venueMarketId: string;
+  venueTicker?: string;
   gammaId?: string;
   slug?: string;
   eventSlug?: string;
   question: string;
   eventTitle?: string;
   description?: string;
+  /** name/url of the venue's stated resolution source, when provided */
+  resolutionSource?: string;
   category?: string;
   tags: string[];
   endDate?: string;
@@ -25,9 +96,14 @@ export interface NormalizedMarket {
   active: boolean;
   closed: boolean;
   negRisk: boolean;
+  /** binary = 0..1 outcome tokens; asset = spot product (crypto reference) */
+  outcomeType: "binary" | "asset";
   liquidity: number;
   volume24h: number;
   volumeTotal: number;
+  openInterest?: number;
+  tickSize?: number;
+  minOrderSize?: number;
   outcomes: MarketOutcome[];
   yesTokenId?: string;
   noTokenId?: string;
@@ -41,7 +117,12 @@ export interface NormalizedMarket {
   oneHourPriceChange?: number;
   /** true when created within the "new market" window */
   isNew?: boolean;
-  source: "gamma" | "mock";
+  /** orders may be routed here (paper always; live behind per-venue gates) */
+  tradable: boolean;
+  /** display/signal input only — can never receive orders */
+  referenceOnly: boolean;
+  sourceUrl?: string;
+  source: "gamma" | "kalshi" | "coinbase" | "mock";
   /** epoch ms when this row was fetched — drives data-freshness checks */
   fetchedAt: number;
 }
@@ -123,6 +204,16 @@ export interface SignalContext {
   trades?: RecentTrade[];
   /** other markets considered by cross-market strategies */
   relatedMarkets?: NormalizedMarket[];
+  /** fresh external reference data for crypto-linked markets */
+  reference?: {
+    spot?: number;
+    spotSource?: string;
+    spotFreshnessMs?: number;
+    /** daily realized volatility of the reference asset (fraction, e.g. 0.03) */
+    realizedVolDaily?: number;
+  };
+  /** cross-venue links involving this market */
+  crossLinks?: CrossVenueLink[];
   settings: RiskSettings;
   now: number;
 }
@@ -280,6 +371,10 @@ export interface UserPrefs {
   watchWallet?: string;
   /** automated-trading policy & envelope */
   autopilot: AutopilotConfig;
+  /** per-venue enablement — live flags are independent per venue */
+  venues: Record<Exclude<VenueId, "coingecko">, VenueSettings> & {
+    coingecko: { publicData: boolean };
+  };
 }
 
 export type AppSettings = RiskSettings & UserPrefs;
@@ -357,6 +452,7 @@ export interface PortfolioState {
   positions: PositionRecord[];
   exposureByMarket: Record<string, number>;
   exposureByCategory: Record<string, number>;
+  exposureByVenue: Record<string, number>;
   realizedPnl: number;
   unrealizedPnl: number;
   dailyPnl: number;
@@ -430,6 +526,49 @@ export interface ExecutionStage {
   label: string;
   status: StageStatus;
   detail?: string;
+}
+
+// ── Cross-venue intelligence ─────────────────────────────────────────────────
+
+export type CrossVenueMatchStatus =
+  | "exact"
+  | "strong_candidate"
+  | "weak_candidate"
+  | "reference_only"
+  | "conflict"
+  | "not_comparable";
+
+export interface RuleComparisonDimension {
+  name: string;
+  a?: string;
+  b?: string;
+  comparable: boolean;
+  note: string;
+}
+
+export interface CrossVenueLink {
+  id: string;
+  sourceVenueId: VenueId;
+  sourceMarketId: string;
+  sourceTitle: string;
+  targetVenueId: VenueId;
+  targetMarketId: string;
+  targetTitle: string;
+  matchStatus: CrossVenueMatchStatus;
+  matchScore: number;
+  /** per-dimension rule comparison — the explainability trail */
+  dimensions: RuleComparisonDimension[];
+  /** price divergence in probability points when both sides are binary */
+  divergence?: number;
+  updatedAt: number;
+}
+
+export interface CryptoThreshold {
+  asset: string; // BTC, ETH, SOL, …
+  coinbaseProduct?: string; // BTC-USD
+  threshold: number; // USD
+  direction: "above" | "below";
+  byDate?: string;
 }
 
 // ── Autopilot (automated trading) ────────────────────────────────────────────

@@ -262,6 +262,103 @@ CREATE TABLE "audit_events" (
 );
 
 -- CreateTable
+CREATE TABLE "venues" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "publicDataEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "privateDataEnabled" BOOLEAN NOT NULL DEFAULT false,
+    "paperTradingEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "liveTradingEnabled" BOOLEAN NOT NULL DEFAULT false,
+    "lastHealthCheck" TIMESTAMP(3),
+    "status" TEXT NOT NULL DEFAULT 'unknown',
+
+    CONSTRAINT "venues_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "venue_credentials" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT,
+    "venueId" TEXT NOT NULL,
+    "credentialType" TEXT NOT NULL,
+    "encryptedCredentialRef" TEXT NOT NULL,
+    "scopes" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "lastUsedAt" TIMESTAMP(3),
+    "revokedAt" TIMESTAMP(3),
+
+    CONSTRAINT "venue_credentials_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "normalized_markets" (
+    "id" TEXT NOT NULL,
+    "venueId" TEXT NOT NULL,
+    "venueMarketId" TEXT NOT NULL,
+    "ticker" TEXT,
+    "title" TEXT NOT NULL,
+    "category" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'active',
+    "closeTime" TIMESTAMP(3),
+    "resolutionRules" TEXT,
+    "tradable" BOOLEAN NOT NULL DEFAULT true,
+    "referenceOnly" BOOLEAN NOT NULL DEFAULT false,
+    "metadata" JSONB,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "normalized_markets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "cross_venue_links" (
+    "id" TEXT NOT NULL,
+    "sourceVenueId" TEXT NOT NULL,
+    "sourceMarketId" TEXT NOT NULL,
+    "targetVenueId" TEXT NOT NULL,
+    "targetMarketId" TEXT NOT NULL,
+    "matchScore" DOUBLE PRECISION NOT NULL,
+    "matchStatus" TEXT NOT NULL,
+    "ruleComparison" JSONB NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "cross_venue_links_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "reference_prices" (
+    "id" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "symbol" TEXT NOT NULL,
+    "price" DOUBLE PRECISION NOT NULL,
+    "bid" DOUBLE PRECISION,
+    "ask" DOUBLE PRECISION,
+    "volume" DOUBLE PRECISION,
+    "timestamp" TIMESTAMP(3) NOT NULL,
+    "freshnessMs" INTEGER NOT NULL,
+
+    CONSTRAINT "reference_prices_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "venue_health" (
+    "id" TEXT NOT NULL,
+    "venueId" TEXT NOT NULL,
+    "restStatus" TEXT NOT NULL DEFAULT 'unknown',
+    "websocketStatus" TEXT NOT NULL DEFAULT 'unknown',
+    "latencyP50" DOUBLE PRECISION,
+    "latencyP95" DOUBLE PRECISION,
+    "latencyP99" DOUBLE PRECISION,
+    "errorRate" DOUBLE PRECISION,
+    "rateLimitRemaining" INTEGER,
+    "lastUpdated" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "venue_health_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "app_settings" (
     "id" TEXT NOT NULL,
     "userId" TEXT,
@@ -336,6 +433,21 @@ CREATE INDEX "audit_events_ts_idx" ON "audit_events"("ts");
 CREATE INDEX "audit_events_type_idx" ON "audit_events"("type");
 
 -- CreateIndex
+CREATE INDEX "normalized_markets_venueId_idx" ON "normalized_markets"("venueId");
+
+-- CreateIndex
+CREATE INDEX "cross_venue_links_sourceMarketId_idx" ON "cross_venue_links"("sourceMarketId");
+
+-- CreateIndex
+CREATE INDEX "cross_venue_links_targetMarketId_idx" ON "cross_venue_links"("targetMarketId");
+
+-- CreateIndex
+CREATE INDEX "reference_prices_source_symbol_timestamp_idx" ON "reference_prices"("source", "symbol", "timestamp");
+
+-- CreateIndex
+CREATE INDEX "venue_health_venueId_lastUpdated_idx" ON "venue_health"("venueId", "lastUpdated");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "app_settings_userId_key_key" ON "app_settings"("userId", "key");
 
 -- AddForeignKey
@@ -358,6 +470,12 @@ ALTER TABLE "fills" ADD CONSTRAINT "fills_orderId_fkey" FOREIGN KEY ("orderId") 
 
 -- AddForeignKey
 ALTER TABLE "fills" ADD CONSTRAINT "fills_intentId_fkey" FOREIGN KEY ("intentId") REFERENCES "live_order_intents"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "venue_credentials" ADD CONSTRAINT "venue_credentials_venueId_fkey" FOREIGN KEY ("venueId") REFERENCES "venues"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "venue_health" ADD CONSTRAINT "venue_health_venueId_fkey" FOREIGN KEY ("venueId") REFERENCES "venues"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "app_settings" ADD CONSTRAINT "app_settings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

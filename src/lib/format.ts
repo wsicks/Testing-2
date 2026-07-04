@@ -24,6 +24,24 @@ export function fmtCents(v: number | undefined | null, digits = 1): string {
   return `${(v * 100).toFixed(digits)}¢`;
 }
 
+/**
+ * venue-aware price: binary outcome tokens render as probability cents,
+ * spot assets as USD with magnitude-appropriate precision.
+ */
+export function fmtPrice(
+  v: number | undefined | null,
+  outcomeType: "binary" | "asset" = "binary",
+  digits = 1,
+): string {
+  if (v === undefined || v === null || Number.isNaN(v)) return "—";
+  if (outcomeType === "asset") {
+    if (v >= 1_000)
+      return `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+    return `$${v.toFixed(v >= 1 ? 2 : 4)}`;
+  }
+  return fmtCents(v, digits);
+}
+
 export function fmtPct(v: number | undefined | null, digits = 1): string {
   if (v === undefined || v === null || Number.isNaN(v)) return "—";
   return `${(v * 100).toFixed(digits)}%`;

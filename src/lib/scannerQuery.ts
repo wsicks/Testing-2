@@ -7,6 +7,7 @@ import type { NormalizedMarket } from "./types";
 
 export interface ScannerQuery {
   q?: string;
+  venue?: string;
   tag?: string;
   closingHrs?: number;
   minLiquidity?: number;
@@ -17,6 +18,10 @@ export interface ScannerQuery {
   newOnly?: boolean;
   highMovement?: boolean;
   watchlistOnly?: boolean;
+  tradableOnly?: boolean;
+  hideReference?: boolean;
+  /** rows older than this many seconds are dropped */
+  maxDataAgeSecs?: number;
   sort?: string;
   dir?: "asc" | "desc";
   limit?: number;
@@ -39,7 +44,20 @@ export function filterSortMarkets(
   const tag = query.tag?.toLowerCase();
 
   const rows = markets.filter((m) => {
-    if (q && !`${m.question} ${m.eventTitle ?? ""}`.toLowerCase().includes(q))
+    if (query.venue && m.venueId !== query.venue) return false;
+    if (query.tradableOnly && (!m.tradable || m.referenceOnly)) return false;
+    if (query.hideReference && m.referenceOnly) return false;
+    if (
+      query.maxDataAgeSecs !== undefined &&
+      now - m.fetchedAt > query.maxDataAgeSecs * 1000
+    )
+      return false;
+    if (
+      q &&
+      !`${m.question} ${m.eventTitle ?? ""} ${m.venueTicker ?? ""}`
+        .toLowerCase()
+        .includes(q)
+    )
       return false;
     if (
       tag &&

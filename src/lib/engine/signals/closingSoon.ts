@@ -5,17 +5,30 @@
 import type { SignalContext, SignalResult, SignalStrategy } from "@/lib/types";
 import { buildSignal, check, ramp } from "./helpers";
 
-export function resolutionClarity(description: string | undefined): {
+export function resolutionClarity(
+  description: string | undefined,
+  /** structured resolution source stated by the venue (e.g. Kalshi settlement_sources) */
+  sourceName?: string,
+): {
   level: "low" | "medium" | "high";
   reason: string;
 } {
   if (!description || description.length < 80) {
+    if (sourceName) {
+      return {
+        level: "medium",
+        reason: `Venue states a resolution source (${sourceName}) but rules text is short`,
+      };
+    }
     return { level: "low", reason: "Resolution text missing or very short" };
   }
   const d = description.toLowerCase();
-  const hasRule = d.includes("resolve to") || d.includes("will resolve");
+  const hasRule = /resolves?\s+to|will\s+resolve|market\s+resolves/.test(d);
   const hasSource =
-    d.includes("resolution source") || d.includes("official") || d.includes("according to");
+    Boolean(sourceName) ||
+    d.includes("resolution source") ||
+    d.includes("official") ||
+    d.includes("according to");
   const hedged =
     d.includes("50-50") || d.includes("discretion") || d.includes("ambigu");
   if (hasRule && hasSource && !hedged)
@@ -44,7 +57,7 @@ export const closingSoonSignal: SignalStrategy = {
     const mid = market.midpoint ?? market.yesPrice ?? 0.5;
     // 0 at the boundaries, 1 at 50c — how unresolved the market still is
     const uncertainty = 1 - Math.abs(mid - 0.5) * 2;
-    const clarity = resolutionClarity(market.description);
+    const clarity = resolutionClarity(market.description, market.resolutionSource);
 
     const checks = [
       check(

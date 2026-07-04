@@ -102,6 +102,17 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
     const market = markets.get(sig.conditionId);
     if (!market) continue;
 
+    // autopilot automation is single-venue by design: cross-venue automation
+    // requires explicit per-venue opt-in that does not exist yet
+    if (market.venueId !== "polymarket") {
+      skips.push(skip(`autopilot entries are restricted to polymarket — ${market.venueId} automation requires explicit per-venue opt-in (not available)`, sig));
+      continue;
+    }
+    if (market.referenceOnly || !market.tradable) {
+      skips.push(skip("market is reference-only/non-tradable — automation forbidden", sig));
+      continue;
+    }
+
     const regime = regimes.get(sig.conditionId) ?? "unknown";
     if (config.requireRegimeMatch && !regimeAllows(sig.strategy, regime)) {
       skips.push(skip(`regime ${regime.toUpperCase()} does not fit ${sig.strategy}`, sig));

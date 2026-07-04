@@ -138,6 +138,70 @@ export default function ApiWalletSettingsPage() {
         </div>
       </Panel>
 
+      <Panel title="venues — independent per-venue controls">
+        <div className="space-y-1.5 text-2xs">
+          {(["polymarket", "kalshi", "coinbase"] as const).map((v) => {
+            const cfg = s?.venues[v];
+            if (!cfg) return null;
+            return (
+              <div key={v} className="flex items-center justify-between border border-line bg-paper p-2">
+                <div>
+                  <div className="font-bold capitalize">{v}</div>
+                  <div className="text-ink-faint">
+                    {v === "kalshi"
+                      ? "regulated event contracts — live requires Kalshi credentials + venue terms"
+                      : v === "coinbase"
+                        ? "crypto spot reference/charting — live requires scoped API credentials"
+                        : "event-market outcome tokens — live requires CLOB credentials"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1">
+                    <span className="label">data</span>
+                    <Switch
+                      checked={cfg.publicData}
+                      onCheckedChange={(x) =>
+                        patch.mutate({ venues: { ...s!.venues, [v]: { ...cfg, publicData: x } } })
+                      }
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <span className="label">paper</span>
+                    <Switch
+                      checked={cfg.paperTrading}
+                      onCheckedChange={(x) =>
+                        patch.mutate({ venues: { ...s!.venues, [v]: { ...cfg, paperTrading: x } } })
+                      }
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <span className="label text-neg">live</span>
+                    <Switch
+                      checked={cfg.liveEnabled}
+                      onCheckedChange={(x) => {
+                        if (
+                          !x ||
+                          window.confirm(
+                            `Enable LIVE trading flag for ${v}? This is one of several independent gates — orders still require the global live gate, venue credentials, and per-order confirmation. Enabling one venue never enables another.`,
+                          )
+                        ) {
+                          patch.mutate({ venues: { ...s!.venues, [v]: { ...cfg, liveEnabled: x } } });
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            );
+          })}
+          <p className="text-3xs text-ink-faint">
+            CoinGecko is reference-only and has no trading flags. Kalshi and
+            Coinbase live adapters ship locked — they fail closed with setup
+            instructions until credentials are configured (see README).
+          </p>
+        </div>
+      </Panel>
+
       <Panel title="accounts">
         <div className="flex flex-wrap items-center gap-2 text-2xs">
           <Button onClick={() => reset("paper")}>reset paper account</Button>

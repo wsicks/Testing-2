@@ -33,6 +33,9 @@ function upstreamLabel(url: string): string {
   if (url.includes("gamma-api")) return "upstream.gamma";
   if (url.includes("clob.")) return "upstream.clob";
   if (url.includes("data-api")) return "upstream.data";
+  if (url.includes("kalshi")) return "upstream.kalshi";
+  if (url.includes("coinbase")) return "upstream.coinbase";
+  if (url.includes("coingecko")) return "upstream.coingecko";
   return "upstream.other";
 }
 

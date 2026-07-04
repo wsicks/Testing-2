@@ -57,6 +57,9 @@ export interface MarketsResponse {
 
 export interface ScannerFilters {
   q?: string;
+  venue?: string;
+  tradableOnly?: boolean;
+  hideReference?: boolean;
   tag?: string;
   closingHrs?: number;
   minLiquidity?: number;
@@ -414,6 +417,62 @@ export function usePerf() {
     queryKey: ["perf"],
     queryFn: () => json("/api/perf"),
     refetchInterval: 5_000,
+  });
+}
+
+// ── multi-venue ───────────────────────────────────────────────────────────
+
+export function useSources() {
+  return useQuery<{
+    sources: import("@/lib/types").SourceStatus[];
+    referencePrices: import("@/lib/types").ReferencePrice[];
+  }>({
+    queryKey: ["sources"],
+    queryFn: () => json("/api/sources"),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useCrossVenue(status?: string) {
+  const params = status ? `?status=${status}` : "";
+  return useQuery<{ links: import("@/lib/types").CrossVenueLink[] }>({
+    queryKey: ["crossvenue", status ?? "all"],
+    queryFn: () => json(`/api/crossvenue${params}`),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCandles(market?: string, resMin = 60, lookbackSec = 7 * 86_400) {
+  return useQuery<{ candles: import("@/lib/types").NormalizedCandle[] }>({
+    queryKey: ["candles", market, resMin, lookbackSec],
+    queryFn: () => {
+      const now = Math.floor(Date.now() / 1000);
+      return json(
+        `/api/candles?market=${encodeURIComponent(market!)}&res=${resMin}&from=${now - lookbackSec}&to=${now}`,
+      );
+    },
+    enabled: Boolean(market),
+    refetchInterval: 30_000,
+  });
+}
+
+export interface SearchResult {
+  kind: "market" | "reference";
+  venueId: string;
+  id: string;
+  ticker?: string;
+  title: string;
+  tradable: boolean;
+  dataClass: string;
+  lastUpdated: number;
+}
+
+export function useSymbolSearch(q: string) {
+  return useQuery<{ results: SearchResult[] }>({
+    queryKey: ["search", q],
+    queryFn: () => json(`/api/search?q=${encodeURIComponent(q)}`),
+    enabled: q.trim().length >= 2,
+    staleTime: 10_000,
   });
 }
 

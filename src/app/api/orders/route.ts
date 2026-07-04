@@ -13,13 +13,13 @@ const placeSchema = z.object({
   outcome: z.string().optional(),
   side: z.enum(["BUY", "SELL"]),
   orderType: z.enum(["limit", "market"]).default("limit"),
-  price: z.number().gt(0).lt(1),
+  price: z.number().positive().lt(10_000_000),
   size: z.number().gt(0).lte(1_000_000),
   winProbability: z.number().gt(0).lt(1).optional(),
   signalScore: z.number().min(0).max(100).optional(),
   signalId: z.string().optional(),
-  targetPrice: z.number().gt(0).lt(1).optional(),
-  stopPrice: z.number().gt(0).lt(1).optional(),
+  targetPrice: z.number().positive().lt(10_000_000).optional(),
+  stopPrice: z.number().positive().lt(10_000_000).optional(),
 });
 
 export async function GET(req: NextRequest) {

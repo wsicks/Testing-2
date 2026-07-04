@@ -35,6 +35,10 @@ export async function GET(req: NextRequest) {
 
   const query: ScannerQuery = {
     q: sp.get("q") ?? undefined,
+    venue: sp.get("venue") ?? undefined,
+    tradableOnly: sp.get("tradableOnly") === "1",
+    hideReference: sp.get("hideReference") === "1",
+    maxDataAgeSecs: num(sp.get("maxDataAgeSecs")),
     tag: sp.get("tag") ?? undefined,
     closingHrs: num(sp.get("closingHrs")),
     minLiquidity: num(sp.get("minLiquidity")),
