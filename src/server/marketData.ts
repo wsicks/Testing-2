@@ -4,6 +4,7 @@
 import {
   DETAIL_CACHE_TTL,
   MARKETS_CACHE_TTL,
+  SCANNER_EVENT_LIMIT,
 } from "@/lib/constants";
 import type {
   NormalizedMarket,
@@ -46,7 +47,7 @@ export interface MarketsPayload {
 export async function getMarkets(): Promise<MarketsPayload> {
   return cached("markets:list", MARKETS_CACHE_TTL, async () => {
     try {
-      const markets = await fetchActiveMarkets({ limit: 100 });
+      const markets = await fetchActiveMarkets({ limit: SCANNER_EVENT_LIMIT });
       updateRegistry(markets); // refresh the O(1) hot-path registry
       return { markets, source: "gamma" as const, fetchedAt: Date.now() };
     } catch (err) {
@@ -105,7 +106,7 @@ export async function getBook(
       await audit(
         "system",
         "api_error",
-        `CLOB book fetch failed for ${tokenId.slice(0, 12)}… — serving MOCK book`,
+        `CLOB book fetch failed for ${tokenId.slice(0, 12)}… — serving MOCK book (${err instanceof Error ? err.message : "unknown"})`,
         { severity: "warn", feedType: "api_error" },
       );
       return mockOrderBook(tokenId, fallbackMid);

@@ -210,8 +210,23 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
   return { order, assessment, rejected: false };
 }
 
+// Settlement must never run concurrently for the same mode: two overlapping
+// runs would read the same open-order snapshot and double-apply fills. Calls
+// are serialized through a per-mode promise chain (single-process mutex).
+const settleChains = new Map<string, Promise<number>>();
+
+export function settleOpenOrders(mode: "paper" | "demo"): Promise<number> {
+  const prev = settleChains.get(mode) ?? Promise.resolve(0);
+  const next = prev.then(
+    () => settleOpenOrdersUnsafe(mode),
+    () => settleOpenOrdersUnsafe(mode),
+  );
+  settleChains.set(mode, next);
+  return next;
+}
+
 /** Re-match all open paper/demo orders against fresh books. */
-export async function settleOpenOrders(mode: "paper" | "demo"): Promise<number> {
+async function settleOpenOrdersUnsafe(mode: "paper" | "demo"): Promise<number> {
   const store = await getStore();
   const settings = await store.getSettings();
   const open = await store.listOrders(mode, ["open", "partially_filled"]);

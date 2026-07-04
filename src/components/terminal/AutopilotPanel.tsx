@@ -50,7 +50,7 @@ export function AutopilotPanel({ full = false }: { full?: boolean }) {
   const [armText, setArmText] = useState("");
   const [armTtl, setArmTtl] = useState("60");
   const [cfg, setCfg] = useState<AutopilotConfig | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(t);

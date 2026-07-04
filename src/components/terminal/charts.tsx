@@ -96,12 +96,18 @@ export function DepthChart({
   asks: BookLevel[];
   height?: number;
 }) {
-  // cumulative depth from best price outward
-  let acc = 0;
-  const bidPts = bids.map((l) => ({ price: l.price * 100, bid: (acc += l.price * l.size) }));
-  acc = 0;
-  const askPts = asks.map((l) => ({ price: l.price * 100, ask: (acc += l.price * l.size) }));
-  const data = [...bidPts.reverse(), ...askPts];
+  // cumulative depth from best price outward (pure accumulation for the
+  // React Compiler — no reassignment inside render-scoped closures)
+  const cumulate = <K extends "bid" | "ask">(levels: BookLevel[], key: K) => {
+    const out: ({ price: number } & Partial<Record<K, number>>)[] = [];
+    let acc = 0;
+    for (const l of levels) {
+      acc += l.price * l.size;
+      out.push({ price: l.price * 100, [key]: acc } as { price: number } & Record<K, number>);
+    }
+    return out;
+  };
+  const data = [...cumulate(bids, "bid").reverse(), ...cumulate(asks, "ask")];
   return (
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 6, bottom: 0, left: -14 }}>

@@ -126,7 +126,6 @@ export function runBacktest(
               size: 0, // sized later against equity at entry time
               stake: 0,
             };
-            feesPaid += 0; // fee applied at sizing time below
           }
         }
         continue;

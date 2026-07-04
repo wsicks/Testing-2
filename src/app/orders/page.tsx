@@ -63,7 +63,7 @@ export default function OrdersPage() {
         bodyClassName="p-0"
       >
         {orders.length === 0 ? (
-          <EmptyNote>no orders yet — place one from a market's order ticket</EmptyNote>
+          <EmptyNote>no orders yet — place one from a market&apos;s order ticket</EmptyNote>
         ) : (
           <table className="w-full text-2xs">
             <thead>

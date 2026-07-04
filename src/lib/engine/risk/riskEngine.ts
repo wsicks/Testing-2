@@ -71,8 +71,8 @@ export function estimateSlippage(
   }
   if (remaining > 0) return 0.05; // book too thin — punitive estimate
   const avg = cost / proposal.size;
-  const ref = proposal.side === "BUY" ? levels[0].price : levels[0].price;
-  return Math.abs(avg - ref);
+  // slippage = average fill distance from the touch (best level on our side)
+  return Math.abs(avg - levels[0].price);
 }
 
 export function evaluateTrade(input: RiskEngineInput): RiskAssessment {

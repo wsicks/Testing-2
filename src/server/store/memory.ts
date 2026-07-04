@@ -53,6 +53,8 @@ export class MemoryStore implements Store {
   private data: Data;
   private file: string | null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private writing = false;
+  private dirtyDuringWrite = false;
 
   constructor(persistFile: string | null = defaultFile()) {
     this.file = persistFile;
@@ -71,18 +73,43 @@ export class MemoryStore implements Store {
     return structuredClone(EMPTY);
   }
 
+  /**
+   * Debounced, fully async, atomic persistence: serialize + write to a temp
+   * file off the hot path, then rename over the target so a crash mid-write
+   * can never leave a truncated store. Writes never overlap; a change landing
+   * during a write schedules one follow-up pass.
+   */
   private persist(): void {
     if (!this.file) return;
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      try {
-        fs.mkdirSync(path.dirname(this.file!), { recursive: true });
-        fs.writeFileSync(this.file!, JSON.stringify(this.data));
-      } catch {
-        /* persistence is best-effort */
-      }
+      void this.flushToDisk();
     }, 400);
+  }
+
+  private async flushToDisk(): Promise<void> {
+    if (!this.file) return;
+    if (this.writing) {
+      this.dirtyDuringWrite = true;
+      return;
+    }
+    this.writing = true;
+    try {
+      const json = JSON.stringify(this.data);
+      const tmp = `${this.file}.tmp`;
+      await fs.promises.mkdir(path.dirname(this.file), { recursive: true });
+      await fs.promises.writeFile(tmp, json);
+      await fs.promises.rename(tmp, this.file);
+    } catch {
+      /* persistence is best-effort */
+    } finally {
+      this.writing = false;
+      if (this.dirtyDuringWrite) {
+        this.dirtyDuringWrite = false;
+        this.persist();
+      }
+    }
   }
 
   async getSettings(): Promise<AppSettings> {

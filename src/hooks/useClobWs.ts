@@ -82,6 +82,8 @@ export function useClobWs(tokenId?: string): {
     setWsStatus("connecting");
     let ws: WebSocket | null = null;
     let closed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
 
     const publish = () => {
       rafRef.current = null;
@@ -98,9 +100,28 @@ export function useClobWs(tokenId?: string): {
       if (rafRef.current === null) rafRef.current = requestAnimationFrame(publish);
     };
 
-    try {
-      ws = new WebSocket(CLOB_WS_URL);
+    // capped exponential backoff; the polled snapshot covers the gaps
+    const scheduleRetry = () => {
+      if (closed || retryTimer) return;
+      attempts += 1;
+      const delay = Math.min(30_000, 2_000 * 2 ** Math.min(attempts, 4));
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        connect();
+      }, delay);
+    };
+
+    const connect = () => {
+      if (closed) return;
+      try {
+        ws = new WebSocket(CLOB_WS_URL);
+      } catch {
+        setWsStatus("error");
+        scheduleRetry();
+        return;
+      }
       ws.onopen = () => {
+        attempts = 0;
         ws?.send(JSON.stringify({ assets_ids: [tokenId], type: "market" }));
         setWsStatus("live");
       };
@@ -142,17 +163,21 @@ export function useClobWs(tokenId?: string): {
         }
       };
       ws.onerror = () => {
-        if (!closed) setWsStatus("error");
+        if (closed) return;
+        setWsStatus("error");
+        scheduleRetry();
       };
       ws.onclose = () => {
-        if (!closed) setWsStatus("error");
+        if (closed) return;
+        setWsStatus("error");
+        scheduleRetry();
       };
-    } catch {
-      setWsStatus("error");
-    }
+    };
+    connect();
 
     return () => {
       closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       ws?.close();
       setBook(undefined);

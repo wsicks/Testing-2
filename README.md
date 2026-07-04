@@ -190,14 +190,25 @@ npm run db:migrate      # applies prisma/migrations
 npm run dev
 ```
 
-### Background workers
+### Background workers — one scheduler, ever
 
-The scanner runs in-process (30s cadence, started lazily) and can also run as
-a dedicated process:
+The scanner (and the autopilot tick inside it) runs in-process in the web
+server by default (30s cadence, started lazily). For production it can run as
+a dedicated process instead:
 
 ```bash
-npm run worker          # continuous scan → signals → order settlement → snapshots
+# web process: hand scheduling to the worker
+DISABLE_EMBEDDED_SCANNER=true npm start
+# worker process (requires the shared Prisma store)
+STORAGE_DRIVER=prisma DATABASE_URL=… npm run worker
 ```
+
+The worker **refuses to start on the memory store** — two processes would
+each hold private in-memory state and clobber each other's `.data` JSON file.
+Never run two schedulers against one store: the autopilot would evaluate and
+execute every entry twice. Paper/demo settlement is serialized through a
+per-mode mutex inside each process; cross-process serialization is the
+single-scheduler rule above.
 
 ### Signal engine (plug-in strategies)
 

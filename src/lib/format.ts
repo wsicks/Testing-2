@@ -2,10 +2,11 @@
 
 export function fmtUsd(v: number | undefined | null, digits = 2): string {
   if (v === undefined || v === null || Number.isNaN(v)) return "—";
+  const sign = v < 0 ? "-" : "";
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
-  if (abs >= 10_000) return `$${(v / 1_000).toFixed(1)}K`;
-  return `$${v.toLocaleString("en-US", {
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 10_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
+  return `${sign}$${abs.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })}`;

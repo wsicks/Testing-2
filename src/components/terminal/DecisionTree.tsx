@@ -89,7 +89,6 @@ export function DecisionTree({
     const freshness = findCheck(assessment, "data_freshness");
     const liquidity = findCheck(assessment, "liquidity_floor");
     const spread = findCheck(assessment, "spread_limit");
-    const edge = findCheck(assessment, "positive_net_edge");
     const slippage = findCheck(assessment, "slippage");
     const size = findCheck(assessment, "trade_size_limit");
     const exposure =

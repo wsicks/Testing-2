@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { placePaperOrder, settleOpenOrders } from "@/server/execution";
+import { placePaperOrder } from "@/server/execution";
+import { ensureBackgroundScanner } from "@/server/scanner";
 import { getStore } from "@/server/store";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +23,10 @@ const placeSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
+  // reads are side-effect free — resting orders are settled by the scanner
+  // tick (30s), which serializes settlement through the per-mode mutex
+  ensureBackgroundScanner();
   const mode = req.nextUrl.searchParams.get("mode") ?? undefined;
-  if (mode === "paper" || mode === "demo") await settleOpenOrders(mode);
   const store = await getStore();
   const orders = await store.listOrders(mode);
   return NextResponse.json({ orders });

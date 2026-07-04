@@ -10,11 +10,6 @@ export const CLOB_WS_URL =
   process.env.NEXT_PUBLIC_CLOB_WS_URL ??
   "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
-export const POLYMARKET_MARKET_URL = (slug: string) =>
-  `https://polymarket.com/market/${slug}`;
-export const POLYMARKET_EVENT_URL = (slug: string) =>
-  `https://polymarket.com/event/${slug}`;
-
 export const APP_NAME = "POLYQUANT";
 
 /**
@@ -68,8 +63,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autopilot: DEFAULT_AUTOPILOT,
 };
 
-/** how many markets the scanner pulls from Gamma per refresh */
-export const SCANNER_MARKET_LIMIT = 300;
+/** how many EVENTS the scanner pulls from Gamma per refresh (each event
+ * nests several markets — 100 events ≈ 1,900 tokenized markets) */
+export const SCANNER_EVENT_LIMIT = 100;
 /** how many top markets get CLOB order-book enrichment per scan */
 export const SCANNER_BOOK_LIMIT = 12;
 /** gamma market list cache TTL (ms) */

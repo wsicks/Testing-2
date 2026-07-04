@@ -11,7 +11,8 @@ import { computePortfolio } from "../portfolio";
 import { incr, measure } from "../perf";
 
 interface Entry {
-  state: PortfolioState;
+  /** last successfully computed state; null until the first refresh lands */
+  state: PortfolioState | null;
   ts: number;
   refreshing: Promise<void> | null;
 }
@@ -25,6 +26,12 @@ function cacheMap(): Map<string, Entry> {
 
 const SOFT_TTL_MS = 10_000;
 
+/**
+ * Refresh policy on failure: keep serving the last-good state (its age keeps
+ * growing, so the staleness gate still catches it); if there has NEVER been a
+ * good state, the failure propagates to the caller instead of handing the
+ * risk engine an undefined portfolio.
+ */
 async function refresh(mode: TerminalMode): Promise<void> {
   const map = cacheMap();
   const entry = map.get(mode);
@@ -33,13 +40,16 @@ async function refresh(mode: TerminalMode): Promise<void> {
     (state) => {
       map.set(mode, { state, ts: Date.now(), refreshing: null });
     },
-    () => {
+    (err) => {
+      incr("exposure.refreshErrors");
       const e = map.get(mode);
       if (e) e.refreshing = null;
+      // no last-good state to fall back on — surface the failure
+      if (!e || e.state === null) throw err;
     },
   );
   if (entry) entry.refreshing = p;
-  else map.set(mode, { state: undefined as unknown as PortfolioState, ts: 0, refreshing: p });
+  else map.set(mode, { state: null, ts: 0, refreshing: p });
   return p;
 }
 
@@ -62,19 +72,26 @@ export async function getExposure(
   const entry = map.get(mode);
   const maxAge = opts.maxAgeMs ?? 60_000;
 
-  if (!entry || entry.ts === 0 || opts.forceFresh) {
+  if (!entry || entry.state === null || opts.forceFresh) {
     await refresh(mode);
   } else {
     const age = Date.now() - entry.ts;
     if (age > maxAge) {
-      // too stale to trade on — block until refreshed
-      await refresh(mode);
+      // too stale to trade on — block until refreshed. If the refresh fails
+      // we still have last-good state; the `stale` flag below reports it.
+      await refresh(mode).catch(() => incr("exposure.staleServes"));
     } else if (age > SOFT_TTL_MS && !entry.refreshing) {
-      void refresh(mode); // async top-up, serve cached now
+      // async top-up, serve cached now; background failure keeps last-good
+      refresh(mode).catch(() => incr("exposure.staleServes"));
       incr("exposure.softRefresh");
     }
   }
-  const fresh = map.get(mode)!;
+  const fresh = map.get(mode);
+  if (!fresh || fresh.state === null) {
+    throw new Error(
+      `exposure state unavailable for ${mode} — portfolio computation failed before any snapshot existed`,
+    );
+  }
   incr("exposure.reads");
   return {
     state: fresh.state,
@@ -86,5 +103,5 @@ export async function getExposure(
 /** call after fills / cancels / cash changes / resets */
 export function invalidateExposure(mode: TerminalMode): void {
   incr("exposure.invalidations");
-  void refresh(mode);
+  refresh(mode).catch(() => incr("exposure.refreshErrors"));
 }

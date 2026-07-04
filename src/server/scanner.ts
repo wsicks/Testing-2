@@ -165,8 +165,9 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       );
     }
 
-    // housekeeping piggybacked on the scan tick
+    // housekeeping piggybacked on the scan tick (settlement is mutex-guarded)
     await settleOpenOrders("paper");
+    await settleOpenOrders("demo");
     await maybeSnapshotPortfolio("paper");
     // autopilot runs after fresh signals land — exits, breakers, entries
     try {
@@ -194,8 +195,13 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
   }
 }
 
-/** Lazily start the in-process background scanner loop (30s cadence). */
+/**
+ * Lazily start the in-process background scanner loop (30s cadence).
+ * Set DISABLE_EMBEDDED_SCANNER=true on the web process when the dedicated
+ * worker owns scheduling — two schedulers would double-run the autopilot.
+ */
 export function ensureBackgroundScanner(): void {
+  if (process.env.DISABLE_EMBEDDED_SCANNER === "true") return;
   const s = state();
   if (s.timer) return;
   s.timer = setInterval(() => {

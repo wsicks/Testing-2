@@ -179,25 +179,3 @@ export async function fetchActiveMarkets(
   return rows;
 }
 
-/** Fetch one market (with its event context) by condition id. */
-export async function fetchMarketByConditionId(
-  conditionId: string,
-  opts: HttpOpts = {},
-): Promise<NormalizedMarket | null> {
-  const url = `${GAMMA_API_URL}/markets` + qs({ condition_ids: conditionId });
-  const markets = await getJson<GammaMarketRaw[]>(url, opts);
-  const m = markets?.[0];
-  if (!m) return null;
-  // fetch the parent event for title/tags (best effort)
-  let event: GammaEventRaw | undefined;
-  try {
-    const evs = await getJson<GammaEventRaw[]>(
-      `${GAMMA_API_URL}/events` + qs({ slug: undefined, limit: 1, condition_ids: conditionId }),
-      opts,
-    );
-    event = evs?.[0];
-  } catch {
-    event = undefined;
-  }
-  return normalizeGammaMarket(m, event);
-}
