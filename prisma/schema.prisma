@@ -1,0 +1,310 @@
+// PolyQuant Terminal — database schema
+// PostgreSQL via Prisma. The app runs without a database (in-memory store with
+// JSON file persistence) when DATABASE_URL is not set; set STORAGE_DRIVER=prisma
+// and DATABASE_URL to persist to Postgres.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String?   @unique
+  displayName     String?
+  termsAcceptedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  wallets  Wallet[]
+  settings AppSetting[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String
+  address   String   @unique
+  chainId   Int      @default(137)
+  label     String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+model Market {
+  conditionId String    @id
+  gammaId     String?   @unique
+  slug        String?
+  question    String
+  description String?
+  category    String?
+  tags        String[]  @default([])
+  endDate     DateTime?
+  active      Boolean   @default(true)
+  closed      Boolean   @default(false)
+  negRisk     Boolean   @default(false)
+  liquidity   Float     @default(0)
+  volume24h   Float     @default(0)
+  volumeTotal Float     @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  outcomes  Outcome[]
+  snapshots MarketSnapshot[]
+  signals   Signal[]
+
+  @@index([active, closed])
+  @@index([endDate])
+  @@map("markets")
+}
+
+model Outcome {
+  id      String @id @default(cuid())
+  marketId String
+  tokenId String @unique
+  label   String
+  index   Int    @default(0)
+
+  market Market @relation(fields: [marketId], references: [conditionId], onDelete: Cascade)
+
+  @@map("outcomes")
+}
+
+model MarketSnapshot {
+  id        String   @id @default(cuid())
+  marketId  String
+  ts        DateTime @default(now())
+  yesPrice  Float?
+  noPrice   Float?
+  bestBid   Float?
+  bestAsk   Float?
+  midpoint  Float?
+  spread    Float?
+  liquidity Float?
+  volume24h Float?
+
+  market Market @relation(fields: [marketId], references: [conditionId], onDelete: Cascade)
+
+  @@index([marketId, ts])
+  @@map("market_snapshots")
+}
+
+model OrderBook {
+  id      String   @id @default(cuid())
+  tokenId String
+  ts      DateTime @default(now())
+  hash    String?
+  bids    Json
+  asks    Json
+
+  @@index([tokenId, ts])
+  @@map("order_books")
+}
+
+model PriceHistory {
+  id      String   @id @default(cuid())
+  tokenId String
+  ts      DateTime
+  price   Float
+
+  @@unique([tokenId, ts])
+  @@index([tokenId])
+  @@map("price_history")
+}
+
+model Signal {
+  id          String    @id @default(cuid())
+  strategy    String
+  marketId    String?
+  conditionId String?
+  tokenId     String?
+  direction   String? // BUY_YES | BUY_NO | NEUTRAL
+  score       Float
+  status      String    @default("proposed") // proposed | approved | rejected | expired
+  summary     String?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+
+  market Market?       @relation(fields: [marketId], references: [conditionId], onDelete: SetNull)
+  checks SignalCheck[]
+
+  @@index([strategy, createdAt])
+  @@index([status])
+  @@map("signals")
+}
+
+model SignalCheck {
+  id        String  @id @default(cuid())
+  signalId  String
+  name      String
+  passed    Boolean
+  value     Float?
+  threshold Float?
+  detail    String?
+
+  signal Signal @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  @@map("signal_checks")
+}
+
+model PaperOrder {
+  id           String    @id @default(cuid())
+  mode         String    @default("paper") // paper | demo
+  conditionId  String?
+  tokenId      String
+  outcome      String?
+  marketTitle  String?
+  category     String?
+  side         String // BUY | SELL
+  orderType    String    @default("limit") // limit | market
+  price        Float
+  size         Float
+  filledSize   Float     @default(0)
+  avgFillPrice Float?
+  status       String    @default("created") // created | open | partially_filled | filled | canceled | rejected | expired
+  signalId     String?
+  reason       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  expiresAt   DateTime?
+
+  fills Fill[]
+
+  @@index([status])
+  @@index([tokenId])
+  @@map("paper_orders")
+}
+
+model LiveOrderIntent {
+  id               String    @id @default(cuid())
+  conditionId      String?
+  tokenId          String
+  outcome          String?
+  marketTitle      String?
+  side             String
+  orderType        String    @default("limit")
+  price            Float
+  size             Float
+  filledSize       Float     @default(0)
+  status           String    @default("created") // created | previewed | approval_required | confirmed | signed | submitted | open | partially_filled | filled | canceled | rejected | expired
+  confirmationText String?
+  approvedAt       DateTime?
+  clobOrderId      String?
+  error            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  expiresAt        DateTime?
+
+  fills Fill[]
+
+  @@index([status])
+  @@map("live_order_intents")
+}
+
+model Fill {
+  id               String   @id @default(cuid())
+  orderId          String?
+  intentId         String?
+  mode             String   @default("paper")
+  tokenId          String
+  conditionId      String?
+  outcome          String?
+  marketTitle      String?
+  category         String?
+  side             String
+  price            Float
+  size             Float
+  fee              Float    @default(0)
+  realizedPnlDelta Float?
+  ts               DateTime @default(now())
+
+  order  PaperOrder?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  intent LiveOrderIntent? @relation(fields: [intentId], references: [id], onDelete: SetNull)
+
+  @@index([tokenId, ts])
+  @@map("fills")
+}
+
+model Position {
+  id           String   @id @default(cuid())
+  mode         String   @default("paper")
+  conditionId  String?
+  tokenId      String
+  outcome      String?
+  marketTitle  String?
+  category     String?
+  size         Float    @default(0)
+  avgPrice     Float    @default(0)
+  realizedPnl  Float    @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tokenId, mode])
+  @@map("positions")
+}
+
+model PortfolioSnapshot {
+  id            String   @id @default(cuid())
+  ts            DateTime @default(now())
+  mode          String
+  totalValue    Float
+  cash          Float
+  exposure      Float
+  realizedPnl   Float
+  unrealizedPnl Float
+  dailyPnl      Float
+  drawdown      Float
+
+  @@index([mode, ts])
+  @@map("portfolio_snapshots")
+}
+
+model RiskSnapshot {
+  id                    String   @id @default(cuid())
+  ts                    DateTime @default(now())
+  mode                  String
+  dailyLossUsed         Float
+  exposurePct           Float
+  liquidityRiskScore    Float
+  killSwitch            Boolean  @default(false)
+  marketConcentration   Json?
+  categoryConcentration Json?
+
+  @@index([mode, ts])
+  @@map("risk_snapshots")
+}
+
+model AuditEvent {
+  id       String   @id @default(cuid())
+  ts       DateTime @default(now())
+  actor    String   @default("system") // system | user | scanner | risk | execution
+  type     String
+  severity String   @default("info") // info | warn | error
+  message  String
+  data     Json?
+
+  @@index([ts])
+  @@index([type])
+  @@map("audit_events")
+}
+
+model AppSetting {
+  id        String   @id @default(cuid())
+  userId    String?
+  key       String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@map("app_settings")
+}

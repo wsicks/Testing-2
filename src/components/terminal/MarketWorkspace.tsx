@@ -1,0 +1,191 @@
+"use client";
+
+// Selected-market workspace: price chart, order book depth, trades, rules,
+// order ticket, execution cycle, and the explainable decision tree — all
+// driven by the same detail query + ticket state.
+
+import { useState } from "react";
+import { useMarketDetail } from "@/hooks/api";
+import { fmtCents, fmtDateTime, fmtTimeUntil, fmtUsd } from "@/lib/format";
+import { Panel } from "@/components/ui/panel";
+import { Badge } from "@/components/ui/badge";
+import { Num } from "@/components/ui/num";
+import { Button } from "@/components/ui/button";
+import { EmptyNote, Spinner } from "@/components/ui/spinner";
+import { PriceChart, DepthChart } from "./charts";
+import { BookLadder, TradesList } from "./BookPanel";
+import { OrderTicket, ticketStages, type TicketState } from "./OrderTicket";
+import { ExecutionCycle } from "./ExecutionCycle";
+import { DecisionTree } from "./DecisionTree";
+
+const INTERVALS = ["1d", "1w", "1m", "max"] as const;
+
+export function MarketWorkspace({
+  conditionId,
+  full = false,
+}: {
+  conditionId?: string;
+  full?: boolean;
+}) {
+  const [interval, setInterval] = useState<(typeof INTERVALS)[number]>("1w");
+  const { data, isLoading } = useMarketDetail(conditionId, interval);
+  const [ticket, setTicket] = useState<TicketState>({ previewing: false });
+  const m = data?.market;
+
+  if (!conditionId) {
+    return (
+      <Panel title="selected market">
+        <EmptyNote>select a market in the scanner</EmptyNote>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-2 xl:grid-cols-3">
+      {/* left 2/3: market data */}
+      <div className="space-y-2 xl:col-span-2">
+        <Panel
+          title={
+            m ? (
+              <span className="normal-case tracking-normal text-ink">
+                {m.question}
+              </span>
+            ) : (
+              "loading market…"
+            )
+          }
+          right={
+            <>
+              {isLoading ? <Spinner /> : null}
+              {m ? (
+                <>
+                  <Badge
+                    variant={
+                      m.tradability === "tradable"
+                        ? "pos"
+                        : m.tradability === "caution"
+                          ? "warn"
+                          : "neg"
+                    }
+                  >
+                    {m.riskGrade} · {m.tradability}
+                  </Badge>
+                  {data?.polymarketUrl ? (
+                    <a
+                      href={data.polymarketUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-2xs text-accent hover:underline"
+                    >
+                      polymarket ↗
+                    </a>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          }
+          bodyClassName="p-0"
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-paper px-2 py-1 text-2xs">
+            <Stat label="yes" v={fmtCents(m?.yesPrice)} />
+            <Stat label="no" v={fmtCents(m?.noPrice)} />
+            <Stat label="bid" v={fmtCents(m?.bestBid)} tone="pos" />
+            <Stat label="ask" v={fmtCents(m?.bestAsk)} tone="neg" />
+            <Stat label="spread" v={fmtCents(m?.spread)} />
+            <Stat label="liquidity" v={fmtUsd(m?.liquidity, 0)} />
+            <Stat label="vol 24h" v={fmtUsd(m?.volume24h, 0)} />
+            <Stat label="closes" v={`${fmtTimeUntil(m?.endDate)} (${fmtDateTime(m?.endDate)})`} />
+            <div className="ml-auto flex gap-0.5">
+              {INTERVALS.map((i) => (
+                <Button
+                  key={i}
+                  size="xs"
+                  variant={interval === i ? "primary" : "ghost"}
+                  onClick={() => setInterval(i)}
+                >
+                  {i}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="p-1">
+            {data?.history?.length ? (
+              <PriceChart history={data.history} height={full ? 260 : 200} />
+            ) : (
+              <EmptyNote>no price history</EmptyNote>
+            )}
+          </div>
+        </Panel>
+
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          <Panel title="order book (yes)" bodyClassName="p-1.5">
+            <BookLadder book={data?.yesBook} />
+          </Panel>
+          <Panel title="depth" bodyClassName="p-1">
+            {data?.yesBook ? (
+              <DepthChart bids={data.yesBook.bids} asks={data.yesBook.asks} />
+            ) : (
+              <EmptyNote>no book</EmptyNote>
+            )}
+            <div className="mt-1 grid grid-cols-2 gap-1 text-2xs">
+              <div className="border border-line bg-paper px-1.5 py-0.5">
+                <span className="label">bid depth ±5c</span>{" "}
+                <Num tone="pos">{fmtUsd(data?.yesBook?.bidDepthUsd, 0)}</Num>
+              </div>
+              <div className="border border-line bg-paper px-1.5 py-0.5">
+                <span className="label">ask depth ±5c</span>{" "}
+                <Num tone="neg">{fmtUsd(data?.yesBook?.askDepthUsd, 0)}</Num>
+              </div>
+            </div>
+          </Panel>
+          <Panel title="recent trades" bodyClassName="p-1.5">
+            <TradesList trades={data?.trades ?? []} />
+          </Panel>
+        </div>
+
+        <Panel title="market rules / resolution" bodyClassName="max-h-40 overflow-y-auto">
+          {m?.description ? (
+            <p className="whitespace-pre-wrap text-2xs leading-snug text-ink-soft">
+              {m.description}
+            </p>
+          ) : (
+            <EmptyNote>no resolution text provided — treat as high ambiguity</EmptyNote>
+          )}
+          <div className="mt-2 grid grid-cols-1 gap-0.5 border-t border-line pt-1 text-3xs text-ink-faint">
+            <span>condition id: <span className="num">{m?.conditionId}</span></span>
+            <span>yes token: <span className="num">{m?.yesTokenId}</span></span>
+            <span>no token: <span className="num">{m?.noTokenId}</span></span>
+          </div>
+        </Panel>
+      </div>
+
+      {/* right 1/3: trade workflow */}
+      <div className="space-y-2">
+        <OrderTicket detail={data} onState={setTicket} />
+        <ExecutionCycle stages={ticketStages(Boolean(data), ticket)} />
+        <DecisionTree
+          marketTitle={m?.question}
+          assessment={ticket.assessment}
+          signal={data?.signals?.[0]}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  v,
+  tone,
+}: {
+  label: string;
+  v: React.ReactNode;
+  tone?: "pos" | "neg";
+}) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className="label">{label}</span>
+      <Num tone={tone}>{v}</Num>
+    </span>
+  );
+}

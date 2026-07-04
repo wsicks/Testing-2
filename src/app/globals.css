@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-paper text-ink antialiased;
+  }
+  body {
+    @apply text-[13px] leading-tight;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-line-strong;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-paper;
+  }
+}
+
+@layer components {
+  /* small uppercase terminal label */
+  .label {
+    @apply text-3xs font-semibold uppercase tracking-[0.08em] text-ink-faint;
+  }
+  /* monospace numeric field */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+  .cell {
+    @apply px-2 py-1 whitespace-nowrap;
+  }
+  .terminal-input {
+    @apply h-6 border border-line bg-panel px-1.5 font-mono text-xs text-ink
+      placeholder:text-ink-faint focus:border-line-strong focus:outline-none;
+  }
+}
+
+.pos-text {
+  color: #15803d;
+}
+.neg-text {
+  color: #b91c1c;
+}
+.warn-text {
+  color: #b45309;
+}
+
+/* React Flow overrides for the terminal look */
+.react-flow__attribution {
+  display: none;
+}

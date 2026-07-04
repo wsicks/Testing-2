@@ -1,0 +1,76 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { audit } from "@/server/audit";
+import { getStore } from "@/server/store";
+
+export const dynamic = "force-dynamic";
+
+const patchSchema = z
+  .object({
+    defaultMode: z.enum(["demo", "paper", "live"]),
+    maxTradePct: z.number().min(0.05).max(100),
+    maxTradeUsd: z.number().min(1).max(1_000_000),
+    maxDailyLossUsd: z.number().min(1).max(1_000_000),
+    maxMarketExposurePct: z.number().min(0.1).max(100),
+    maxCategoryExposurePct: z.number().min(0.1).max(100),
+    minLiquidityUsd: z.number().min(0),
+    maxSpread: z.number().gt(0).lte(0.5),
+    minSignalScore: z.number().min(0).max(100),
+    orderExpirationMin: z.number().min(1).max(60 * 24 * 30),
+    kellyCap: z.number().gt(0).lte(1),
+    feeRateBps: z.number().min(0).max(1_000),
+    slippageBps: z.number().min(0).max(5_000),
+    typedConfirmThresholdUsd: z.number().min(0),
+    staleDataMaxSecs: z.number().min(5).max(3_600),
+    closingSoonHours: z.number().min(1).max(24 * 30),
+    watchlist: z.array(z.string()).max(500),
+    categories: z.array(z.string()).max(100),
+    termsAcceptedAt: z.number().optional(),
+    liveModeEnabled: z.boolean(),
+    killSwitch: z.boolean(),
+    scannersEnabled: z.boolean(),
+    paperStartingCash: z.number().min(100).max(10_000_000),
+    watchWallet: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]{40}$/)
+      .or(z.literal(""))
+      .optional(),
+  })
+  .partial();
+
+export async function GET() {
+  const store = await getStore();
+  const settings = await store.getSettings();
+  return NextResponse.json({
+    settings,
+    liveTradingEnv: process.env.LIVE_TRADING_ENABLED === "true",
+  });
+}
+
+export async function PATCH(req: NextRequest) {
+  const parsed = patchSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "invalid settings", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const store = await getStore();
+  const before = await store.getSettings();
+  const settings = await store.patchSettings(parsed.data);
+  const changed = Object.keys(parsed.data).join(", ");
+  await audit("user", "settings_changed", `Settings updated: ${changed}`, {
+    data: { changed: parsed.data },
+    feedType: "user_action",
+  });
+  if (parsed.data.liveModeEnabled === true && !before.liveModeEnabled) {
+    await audit("user", "live_mode_enabled", "User explicitly ENABLED live mode in settings", {
+      severity: "warn",
+      feedType: "user_action",
+    });
+  }
+  return NextResponse.json({
+    settings,
+    liveTradingEnv: process.env.LIVE_TRADING_ENABLED === "true",
+  });
+}
