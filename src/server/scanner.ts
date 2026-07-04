@@ -8,10 +8,12 @@ import {
   SCANNER_BOOK_LIMIT,
 } from "@/lib/constants";
 import { runAllStrategies } from "@/lib/engine/signals/registry";
-import type { OrderBookData, SignalResult } from "@/lib/types";
+import type { OrderBookData, RecentTrade, SignalResult } from "@/lib/types";
 import { audit } from "./audit";
+import { autopilotTick } from "./autopilot";
 import { publishFeed } from "./events";
-import { getBook, getHistory, getMarkets } from "./marketData";
+import { measure, measureSync, recordLatency } from "./perf";
+import { getBook, getHistory, getMarkets, getTrades } from "./marketData";
 import { maybeSnapshotPortfolio } from "./portfolio";
 import { settleOpenOrders } from "./execution";
 import { getStore } from "./store";
@@ -59,6 +61,7 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
 
   s.running = true;
   s.lastScanAt = Date.now();
+  const tickStart = performance.now();
   try {
     const { markets } = await getMarkets();
     const now = Date.now();
@@ -88,11 +91,13 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       .slice(0, SCANNER_BOOK_LIMIT);
     const books = new Map<string, OrderBookData>();
     const histories = new Map<string, { t: number; p: number }[]>();
+    const tapes = new Map<string, RecentTrade[]>();
     for (const m of top) {
       if (!m.yesTokenId) continue;
       try {
         books.set(m.conditionId, await getBook(m.yesTokenId, m.midpoint));
         histories.set(m.conditionId, await getHistory(m.yesTokenId, "1d", 30));
+        tapes.set(m.conditionId, await getTrades(m.conditionId));
       } catch {
         /* enrichment is best-effort */
       }
@@ -109,14 +114,20 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
     const created: SignalResult[] = [];
     let rejected = 0;
     for (const m of markets) {
-      const results = runAllStrategies({
-        market: m,
-        book: books.get(m.conditionId),
-        history: histories.get(m.conditionId),
-        relatedMarkets: markets,
-        settings,
-        now,
-      });
+      // per-market signal scoring is a hot.* metric (<20ms p95 budget).
+      // cross-market relation scans are O(universe) per market, so they only
+      // run for markets liquid enough to ever pass the risk engine.
+      const results = measureSync("hot.signal_market", () =>
+        runAllStrategies({
+          market: m,
+          book: books.get(m.conditionId),
+          history: histories.get(m.conditionId),
+          trades: tapes.get(m.conditionId),
+          relatedMarkets: m.volume24h >= 10_000 ? markets : undefined,
+          settings,
+          now,
+        }),
+      );
       for (const sig of results) {
         if (seen.has(`${sig.strategy}:${sig.conditionId}`)) continue;
         seen.add(`${sig.strategy}:${sig.conditionId}`);
@@ -125,9 +136,18 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       }
     }
 
-    // keep the highest-scoring proposals; cap volume per scan
+    // keep the highest-scoring signals PER STRATEGY so informational
+    // (always-100) screens can't crowd out directional strategies
     created.sort((a, b) => b.score - a.score);
-    const toPersist = created.slice(0, 40);
+    const perStrategy = new Map<string, SignalResult[]>();
+    for (const sig of created) {
+      const list = perStrategy.get(sig.strategy) ?? [];
+      if (list.length < 8) {
+        list.push(sig);
+        perStrategy.set(sig.strategy, list);
+      }
+    }
+    const toPersist = [...perStrategy.values()].flat().slice(0, 56);
     if (toPersist.length) {
       await store.addSignals(toPersist);
       for (const sig of toPersist.slice(0, 8)) {
@@ -148,6 +168,16 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
     // housekeeping piggybacked on the scan tick
     await settleOpenOrders("paper");
     await maybeSnapshotPortfolio("paper");
+    // autopilot runs after fresh signals land — exits, breakers, entries
+    try {
+      const ap = await measure("autopilot.tick", () => autopilotTick());
+      if (ap.ran && (ap.entries || ap.exits)) {
+        publishFeed("scanner_tick", `Autopilot tick: ${ap.entries} entr${ap.entries === 1 ? "y" : "ies"}, ${ap.exits} exit(s)`, {});
+      }
+    } catch (err) {
+      console.error("[polyquant] autopilot tick failed:", err);
+    }
+    recordLatency("scan.tick_total", performance.now() - tickStart);
     publishFeed("scanner_tick", `Scanner pass: ${markets.length} markets, ${toPersist.length} new signal(s)`, {
       data: { markets: markets.length },
     });

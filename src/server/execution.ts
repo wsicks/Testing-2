@@ -19,8 +19,9 @@ import {
 } from "@/lib/engine/execution/paperEngine";
 import { genId } from "@/lib/utils";
 import { audit } from "./audit";
-import { getBook, getMarketByCondition, getMarkets } from "./marketData";
-import { computePortfolio } from "./portfolio";
+import { getExposure, invalidateExposure } from "./hotpath/exposure";
+import { getBook, getMarketByCondition, getMarketByToken } from "./marketData";
+import { measure, measureSync } from "./perf";
 import { getStore } from "./store";
 
 export interface PlaceOrderBody {
@@ -37,6 +38,9 @@ export interface PlaceOrderBody {
   signalId?: string;
   targetPrice?: number;
   stopPrice?: number;
+  origin?: "manual" | "autopilot";
+  /** risk-reducing exit of an existing position */
+  isExit?: boolean;
 }
 
 export interface PlaceOrderResult {
@@ -46,11 +50,10 @@ export interface PlaceOrderResult {
 }
 
 async function marketContext(body: PlaceOrderBody) {
+  // O(1) registry lookups; the book is served from the in-memory TTL cache
   const market = body.conditionId
     ? await getMarketByCondition(body.conditionId)
-    : (await getMarkets()).markets.find(
-        (m) => m.yesTokenId === body.tokenId || m.noTokenId === body.tokenId,
-      );
+    : await getMarketByToken(body.tokenId);
   const book = await getBook(body.tokenId, market?.midpoint ?? 0.5);
   return { market, book };
 }
@@ -71,20 +74,42 @@ function toProposal(body: PlaceOrderBody, market?: { question?: string; category
     signalId: body.signalId,
     targetPrice: body.targetPrice,
     stopPrice: body.stopPrice,
+    isExit: body.isExit,
   };
 }
 
-/** Evaluate a proposal without placing anything (order preview). */
+/**
+ * Evaluate a proposal without placing anything (order preview).
+ * Hot path: settings, market, book and exposure all come from in-memory
+ * caches — no store/DB round-trips once warm. Live previews force a fresh
+ * exposure read when the cache exceeds the staleness threshold.
+ */
 export async function previewTrade(body: PlaceOrderBody): Promise<{
   assessment: RiskAssessment;
   marketTitle?: string;
 }> {
-  const store = await getStore();
-  const settings = await store.getSettings();
-  const { market, book } = await marketContext(body);
-  const portfolio = await computePortfolio(body.mode);
-  const proposal = toProposal(body, market);
-  const assessment = evaluateTrade({ proposal, portfolio, settings, market, book });
+  return measure("hot.order_preview", async () => {
+    const store = await getStore();
+    const settings = await store.getSettings();
+    const { market, book } = await marketContext(body);
+    // stale exposure blocks until refreshed (never trade on stale state)
+    const exposure = await getExposure(body.mode, {
+      maxAgeMs: settings.staleDataMaxSecs * 1000,
+    });
+    const portfolio = exposure.state;
+    const proposal = toProposal(body, market);
+    const assessment = measureSync("hot.risk_check", () =>
+      evaluateTrade({ proposal, portfolio, settings, market, book }),
+    );
+    return finishPreview(body, market, assessment);
+  });
+}
+
+async function finishPreview(
+  body: PlaceOrderBody,
+  market: Awaited<ReturnType<typeof marketContext>>["market"],
+  assessment: RiskAssessment,
+): Promise<{ assessment: RiskAssessment; marketTitle?: string }> {
   await audit(
     "risk",
     "order_preview",
@@ -106,9 +131,14 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
   const store = await getStore();
   const settings = await store.getSettings();
   const { market, book } = await marketContext(body);
-  const portfolio = await computePortfolio(body.mode);
+  const exposure = await getExposure(body.mode, {
+    maxAgeMs: settings.staleDataMaxSecs * 1000,
+  });
+  const portfolio = exposure.state;
   const proposal = toProposal(body, market);
-  const assessment = evaluateTrade({ proposal, portfolio, settings, market, book });
+  const assessment = measureSync("hot.risk_check", () =>
+    evaluateTrade({ proposal, portfolio, settings, market, book }),
+  );
 
   if (!assessment.approved) {
     await audit(
@@ -133,6 +163,7 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
     outcome: body.outcome,
     marketTitle: market?.question,
     category: market?.category,
+    origin: body.origin ?? "manual",
     side: body.side,
     orderType: body.orderType,
     price: body.price,
@@ -148,8 +179,8 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
   await audit(
     "execution",
     "order_submitted",
-    `${body.mode.toUpperCase()} order ${order.id}: ${body.side} ${body.size} ${body.outcome ?? ""} @ ${(body.price * 100).toFixed(1)}c — ${market?.question ?? body.tokenId.slice(0, 12)}`,
-    { data: { orderId: order.id, mode: body.mode }, feedType: "order_submitted" },
+    `${body.mode.toUpperCase()}${body.origin === "autopilot" ? "/AUTOPILOT" : ""} order ${order.id}: ${body.side} ${body.size} ${body.outcome ?? ""} @ ${(body.price * 100).toFixed(1)}c — ${market?.question ?? body.tokenId.slice(0, 12)}`,
+    { data: { orderId: order.id, mode: body.mode, origin: body.origin ?? "manual" }, feedType: "order_submitted" },
   );
 
   // immediate match attempt against the current book
@@ -175,6 +206,7 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
     );
   }
   await store.updateOrder(order);
+  if (fills.length) invalidateExposure(body.mode); // async refresh after fills
   return { order, assessment, rejected: false };
 }
 
@@ -214,6 +246,7 @@ export async function settleOpenOrders(mode: "paper" | "demo"): Promise<number> 
     }
     await store.updateOrder(next);
   }
+  if (touched > 0) invalidateExposure(mode);
   return touched;
 }
 
@@ -242,6 +275,7 @@ export async function cancelAllOrders(mode: "paper" | "demo"): Promise<number> {
       data: { count: open.length },
       feedType: "order_canceled",
     });
+    invalidateExposure(mode);
   }
   return open.length;
 }
@@ -269,9 +303,14 @@ export async function createLiveIntent(body: PlaceOrderBody): Promise<{
   const settings = await store.getSettings();
   const gate = liveGate(settings);
   const { market, book } = await marketContext(body);
-  const portfolio = await computePortfolio("live");
+  // live path: never evaluate on stale exposure — block until refreshed
+  const exposure = await getExposure("live", {
+    maxAgeMs: settings.staleDataMaxSecs * 1000,
+  });
   const proposal = toProposal(body, market);
-  const assessment = evaluateTrade({ proposal, portfolio, settings, market, book });
+  const assessment = measureSync("hot.risk_check", () =>
+    evaluateTrade({ proposal, portfolio: exposure.state, settings, market, book }),
+  );
 
   const now = Date.now();
   const needsTyped =
@@ -282,6 +321,7 @@ export async function createLiveIntent(body: PlaceOrderBody): Promise<{
     tokenId: body.tokenId,
     outcome: body.outcome,
     marketTitle: market?.question,
+    origin: body.origin ?? "manual",
     side: body.side,
     orderType: body.orderType,
     price: body.price,
@@ -317,13 +357,16 @@ export async function createLiveIntent(body: PlaceOrderBody): Promise<{
 }
 
 /**
- * Confirm a live intent. This is the ONLY path that can submit a live order,
- * and it requires: gate open, risk approval at creation, explicit user call,
- * and typed confirmation text when above the configured threshold.
+ * Confirm a live intent. This is the ONLY path that can submit a live order.
+ * Manual path: explicit user call + typed confirmation above the threshold.
+ * Autopilot path (`opts.autopilotArmed`): permitted only while the user has
+ * explicitly ARMED live autopilot — the arming ritual (typed phrase + TTL +
+ * budget) is the standing confirmation; the audit trail records it as such.
  */
 export async function confirmLiveIntent(
   id: string,
   confirmationText: string | undefined,
+  opts: { autopilotArmed?: boolean } = {},
 ): Promise<LiveOrderIntent> {
   const store = await getStore();
   const settings = await store.getSettings();
@@ -349,7 +392,11 @@ export async function confirmLiveIntent(
   }
   const needsTyped =
     intent.price * intent.size >= settings.typedConfirmThresholdUsd;
-  if (needsTyped && confirmationText?.trim().toUpperCase() !== "CONFIRM") {
+  if (
+    !opts.autopilotArmed &&
+    needsTyped &&
+    confirmationText?.trim().toUpperCase() !== "CONFIRM"
+  ) {
     throw new Error(
       `This order is above $${settings.typedConfirmThresholdUsd} — type CONFIRM to approve it`,
     );
@@ -358,15 +405,21 @@ export async function confirmLiveIntent(
   let next: LiveOrderIntent = {
     ...intent,
     status: "confirmed",
-    confirmationText: confirmationText?.trim(),
+    confirmationText: opts.autopilotArmed
+      ? "auto-confirmed under armed autopilot session"
+      : confirmationText?.trim(),
     approvedAt: Date.now(),
     updatedAt: Date.now(),
   };
   await store.updateIntent(next);
-  await audit("user", "live_intent_confirmed", `User CONFIRMED live intent ${id}`, {
-    data: { intentId: id },
-    feedType: "user_action",
-  });
+  await audit(
+    opts.autopilotArmed ? "execution" : "user",
+    "live_intent_confirmed",
+    opts.autopilotArmed
+      ? `Intent ${id} auto-confirmed under ARMED live autopilot (user pre-authorized this session)`
+      : `User CONFIRMED live intent ${id}`,
+    { data: { intentId: id, autopilot: Boolean(opts.autopilotArmed) }, feedType: "user_action" },
+  );
 
   // hand off to the CLOB adapter (bring-your-own credentials)
   try {

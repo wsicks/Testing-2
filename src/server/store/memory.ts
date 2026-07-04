@@ -31,6 +31,7 @@ interface Data {
   audit: AuditEventRecord[];
   accounts: Record<string, AccountState>;
   portfolioSnapshots: PortfolioSnapshotRecord[];
+  kv: Record<string, unknown>;
 }
 
 const EMPTY: Data = {
@@ -43,6 +44,7 @@ const EMPTY: Data = {
   audit: [],
   accounts: {},
   portfolioSnapshots: [],
+  kv: {},
 };
 
 const CAPS = { fills: 5000, signals: 1500, audit: 5000, portfolioSnapshots: 5000 };
@@ -249,6 +251,15 @@ export class MemoryStore implements Store {
     return this.data.portfolioSnapshots
       .filter((s) => s.mode === mode)
       .slice(-limit);
+  }
+
+  async getKV<T>(key: string): Promise<T | undefined> {
+    return this.data.kv[key] as T | undefined;
+  }
+
+  async setKV<T>(key: string, value: T): Promise<void> {
+    this.data.kv[key] = value;
+    this.persist();
   }
 
   async resetMode(mode: TerminalMode): Promise<void> {

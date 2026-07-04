@@ -23,8 +23,19 @@ import {
   mockOrderBook,
   mockPriceHistory,
 } from "@/lib/demo/demoData";
+import { setUpstreamLatencyHook } from "@/lib/polymarket/http";
 import { cached } from "./cache";
 import { audit } from "./audit";
+import { recordLatency } from "./perf";
+import {
+  regByCondition,
+  regByToken,
+  regPrices,
+  updateRegistry,
+} from "./hotpath/registry";
+
+// external Polymarket round-trips → perf panel (upstream.*, no <20ms promise)
+setUpstreamLatencyHook(recordLatency);
 
 export interface MarketsPayload {
   markets: NormalizedMarket[];
@@ -36,6 +47,7 @@ export async function getMarkets(): Promise<MarketsPayload> {
   return cached("markets:list", MARKETS_CACHE_TTL, async () => {
     try {
       const markets = await fetchActiveMarkets({ limit: 100 });
+      updateRegistry(markets); // refresh the O(1) hot-path registry
       return { markets, source: "gamma" as const, fetchedAt: Date.now() };
     } catch (err) {
       await audit(
@@ -44,8 +56,10 @@ export async function getMarkets(): Promise<MarketsPayload> {
         `Gamma markets fetch failed — serving MOCK market list (${err instanceof Error ? err.message : "unknown"})`,
         { severity: "error", feedType: "api_error" },
       );
+      const markets = mockMarkets();
+      updateRegistry(markets);
       return {
-        markets: mockMarkets(),
+        markets,
         source: "mock" as const,
         fetchedAt: Date.now(),
       };
@@ -56,8 +70,23 @@ export async function getMarkets(): Promise<MarketsPayload> {
 export async function getMarketByCondition(
   conditionId: string,
 ): Promise<NormalizedMarket | undefined> {
+  // O(1) registry hit on the hot path; fall through to a refresh on miss
+  const hit = regByCondition(conditionId);
+  if (hit) return hit;
   const { markets } = await getMarkets();
   return markets.find((m) => m.conditionId === conditionId);
+}
+
+/** O(1) market lookup by outcome token id (hot path) */
+export async function getMarketByToken(
+  tokenId: string,
+): Promise<NormalizedMarket | undefined> {
+  const hit = regByToken(tokenId);
+  if (hit) return hit;
+  const { markets } = await getMarkets();
+  return markets.find(
+    (m) => m.yesTokenId === tokenId || m.noTokenId === tokenId,
+  );
 }
 
 export function isMockToken(tokenId: string): boolean {
@@ -110,14 +139,10 @@ export async function getTrades(conditionId: string): Promise<RecentTrade[]> {
   });
 }
 
-/** tokenId -> latest price map from the market list (yes + no tokens) */
+/** tokenId -> latest price map (precomputed in the hot-path registry) */
 export async function priceLookup(): Promise<Map<string, number>> {
-  const { markets } = await getMarkets();
-  const map = new Map<string, number>();
-  for (const m of markets) {
-    for (const o of m.outcomes) {
-      if (o.tokenId && o.price !== undefined) map.set(o.tokenId, o.price);
-    }
-  }
-  return map;
+  const pre = regPrices();
+  if (pre.size > 0) return pre;
+  await getMarkets(); // populates the registry
+  return regPrices();
 }

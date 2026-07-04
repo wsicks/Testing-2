@@ -35,6 +35,22 @@ const patchSchema = z
       .regex(/^0x[a-fA-F0-9]{40}$/)
       .or(z.literal(""))
       .optional(),
+    autopilot: z.object({
+      mode: z.enum(["off", "observe", "paper", "live"]),
+      enabledStrategies: z.array(z.string()).max(20),
+      minScore: z.number().min(0).max(100),
+      perTradeUsd: z.number().min(1).max(100_000),
+      maxOpenPositions: z.number().min(1).max(100),
+      maxTradesPerHour: z.number().min(1).max(600),
+      maxSessionNotionalUsd: z.number().min(1).max(1_000_000),
+      sessionMaxLossUsd: z.number().min(1).max(1_000_000),
+      targetPct: z.number().gt(0).lte(500),
+      stopPct: z.number().gt(0).lte(100),
+      trailPct: z.number().gt(0).lte(100),
+      maxHoldMin: z.number().min(1).max(60 * 24 * 30),
+      flattenBeforeCloseMin: z.number().min(0).max(60 * 24),
+      requireRegimeMatch: z.boolean(),
+    }),
   })
   .partial();
 

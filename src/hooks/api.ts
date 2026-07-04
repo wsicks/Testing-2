@@ -10,6 +10,7 @@ import {
 import type {
   AppSettings,
   AuditEventRecord,
+  AutopilotStatus,
   BacktestResult,
   LiveOrderIntent,
   NormalizedMarket,
@@ -345,6 +346,74 @@ export function useKillSwitch() {
       qc.invalidateQueries({ queryKey: ["health"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
     },
+  });
+}
+
+// ── autopilot ─────────────────────────────────────────────────────────────
+
+export function useAutopilot() {
+  return useQuery<AutopilotStatus>({
+    queryKey: ["autopilot"],
+    queryFn: () => json("/api/autopilot"),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useArmAutopilot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { confirmation: string; ttlMinutes: number }) =>
+      json<{ ok: boolean; error?: string; armedUntil?: number }>(
+        "/api/autopilot/arm",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+        },
+      ),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["autopilot"] }),
+  });
+}
+
+export function useDisarmAutopilot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { resetSession?: boolean } = {}) =>
+      json("/api/autopilot/disarm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["autopilot"] }),
+  });
+}
+
+// ── perf ──────────────────────────────────────────────────────────────────
+
+export interface PerfSnapshot {
+  hists: {
+    label: string;
+    count: number;
+    p50: number;
+    p95: number;
+    p99: number;
+    max: number;
+    last: number;
+  }[];
+  counters: Record<string, number>;
+  cacheHitRate?: number;
+  uptimeMs: number;
+  memoryMb: number;
+  auditQueueDepth: number;
+  registry: { size: number; updatedAt: number; ageMs: number };
+  budgetsMs: { hotP95Target: number; note: string };
+}
+
+export function usePerf() {
+  return useQuery<PerfSnapshot>({
+    queryKey: ["perf"],
+    queryFn: () => json("/api/perf"),
+    refetchInterval: 5_000,
   });
 }
 

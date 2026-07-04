@@ -2,6 +2,8 @@
 // transparently mirrors through Redis when REDIS_URL is configured so several
 // processes (web + worker) share one upstream request budget.
 
+import { incr } from "./perf";
+
 type Entry = { value: unknown; exp: number };
 
 interface CacheGlobal {
@@ -45,7 +47,11 @@ async function getRedis(): Promise<import("ioredis").Redis | null> {
 export async function cacheGet<T>(key: string): Promise<T | undefined> {
   const s = state();
   const e = s.map.get(key);
-  if (e && e.exp > Date.now()) return e.value as T;
+  if (e && e.exp > Date.now()) {
+    incr("cache.hit");
+    return e.value as T;
+  }
+  incr("cache.miss");
   s.map.delete(key);
   const redis = await getRedis();
   if (redis) {

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 const LINKS: { href: string; label: string }[] = [
   { href: "/", label: "Dashboard" },
   { href: "/scanner", label: "Scanner" },
+  { href: "/autopilot", label: "Autopilot" },
   { href: "/positions", label: "Positions" },
   { href: "/orders", label: "Orders" },
   { href: "/signals", label: "Signals" },
@@ -18,6 +19,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/settings/risk", label: "Risk" },
   { href: "/settings/api", label: "API/Wallet" },
   { href: "/audit", label: "Audit" },
+  { href: "/perf", label: "Perf" },
 ];
 
 export function NavBar() {

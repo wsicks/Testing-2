@@ -178,13 +178,15 @@ describe("closing-soon scanner", () => {
 });
 
 describe("registry", () => {
-  it("registers all five launch strategies", () => {
+  it("registers all seven strategies", () => {
     expect(STRATEGIES.map((s) => s.id)).toEqual([
       "liquidity_spread",
       "price_movement",
       "complement_check",
       "cross_market",
       "closing_soon",
+      "dislocation",
+      "microstructure",
     ]);
   });
 

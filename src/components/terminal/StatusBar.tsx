@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useHealth, usePortfolio, useSettings } from "@/hooks/api";
+import { useAutopilot, useHealth, usePortfolio, useSettings } from "@/hooks/api";
 import { useFeed } from "@/hooks/useFeed";
 import { useTerminal } from "@/store/terminal";
 import { fmtAgo, fmtUsd, shortAddr } from "@/lib/format";
@@ -34,6 +34,7 @@ export function StatusBar() {
   const { data: health } = useHealth();
   const { data: settings } = useSettings();
   const { data: pf } = usePortfolio(mode);
+  const { data: ap } = useAutopilot();
   const { status: streamStatus } = useFeed(1);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -89,6 +90,22 @@ export function StatusBar() {
       </Item>
       <div className="ml-auto flex items-center gap-1">
         {pf?.portfolio.isSample ? <Badge variant="warn">sample data</Badge> : null}
+        {ap && ap.config.mode !== "off" ? (
+          <Badge
+            variant={
+              ap.session.breakerTripped
+                ? "neg"
+                : ap.config.mode === "live"
+                  ? "neg"
+                  : ap.config.mode === "paper"
+                    ? "pos"
+                    : "accent"
+            }
+          >
+            autopilot {ap.config.mode}
+            {ap.session.breakerTripped ? " · breaker" : ""}
+          </Badge>
+        ) : null}
         <Badge variant={health?.scannersEnabled ? "pos" : "default"}>
           scanners {health?.scannersEnabled ? "on" : "off"}
         </Badge>

@@ -76,6 +76,7 @@ export class PrismaStore implements Store {
       outcome: o.outcome ?? null,
       marketTitle: o.marketTitle ?? null,
       category: o.category ?? null,
+      origin: o.origin ?? null,
       side: o.side,
       orderType: o.orderType,
       price: o.price,
@@ -97,6 +98,7 @@ export class PrismaStore implements Store {
     outcome: string | null;
     marketTitle: string | null;
     category: string | null;
+    origin: string | null;
     side: string;
     orderType: string;
     price: number;
@@ -118,6 +120,7 @@ export class PrismaStore implements Store {
       outcome: r.outcome ?? undefined,
       marketTitle: r.marketTitle ?? undefined,
       category: r.category ?? undefined,
+      origin: (r.origin ?? undefined) as PaperOrder["origin"],
       side: r.side as PaperOrder["side"],
       orderType: r.orderType as PaperOrder["orderType"],
       price: r.price,
@@ -175,6 +178,7 @@ export class PrismaStore implements Store {
         tokenId: intent.tokenId,
         outcome: intent.outcome ?? null,
         marketTitle: intent.marketTitle ?? null,
+        origin: intent.origin ?? null,
         side: intent.side,
         orderType: intent.orderType,
         price: intent.price,
@@ -213,6 +217,7 @@ export class PrismaStore implements Store {
     tokenId: string;
     outcome: string | null;
     marketTitle: string | null;
+    origin: string | null;
     side: string;
     orderType: string;
     price: number;
@@ -233,6 +238,7 @@ export class PrismaStore implements Store {
       tokenId: r.tokenId,
       outcome: r.outcome ?? undefined,
       marketTitle: r.marketTitle ?? undefined,
+      origin: (r.origin ?? undefined) as LiveOrderIntent["origin"],
       side: r.side as LiveOrderIntent["side"],
       orderType: r.orderType as LiveOrderIntent["orderType"],
       price: r.price,
@@ -567,6 +573,14 @@ export class PrismaStore implements Store {
       dailyPnl: r.dailyPnl,
       drawdown: r.drawdown,
     }));
+  }
+
+  async getKV<T>(key: string): Promise<T | undefined> {
+    return this.getJsonSetting<T>(`kv:${key}`);
+  }
+
+  async setKV<T>(key: string, value: T): Promise<void> {
+    await this.setJsonSetting(`kv:${key}`, value);
   }
 
   async resetMode(mode: TerminalMode): Promise<void> {

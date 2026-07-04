@@ -1,14 +1,17 @@
 # POLYQUANT Terminal
 
-A real-time **Polymarket trading analytics terminal**: dense quant-style
-dashboard, live market scanner, order-book analytics, explainable signal
-engine, hard-limit risk engine, full paper-trading loop, backtesting, Monte
-Carlo sizing, and an end-to-end audit trail.
+A real-time **Polymarket trading analytics terminal** with a fully automated
+trading engine: dense quant-style dashboard, live market scanner, order-book
+analytics, explainable signal engine, hard-limit risk engine, autonomous
+autopilot with a Thompson-sampling strategy allocator, full paper-trading
+loop, backtesting, Monte Carlo sizing, sub-20ms instrumented hot path, and an
+end-to-end audit trail.
 
 > **Honesty by construction** — the app never fabricates performance. Demo mode
 > shows deterministic, deliberately-unimpressive data labeled `SAMPLE`;
 > backtests are labeled `HISTORICAL SIMULATION`; the Monte Carlo panel is a
-> risk display, not a profit claim; live trading ships **locked**.
+> risk display, not a profit claim; live trading ships **locked**; the bandit
+> allocator learns only from *realized* fills, never asserted edges.
 
 ---
 
@@ -73,11 +76,55 @@ or an isolated operational wallet. `POLY_SIGNER_PRIVATE_KEY` exists for the
 latter only and is strongly discouraged for anything else. Credentials live in
 environment variables, never in the database.
 
+## Autopilot — completely automated trading
+
+The autopilot (`/autopilot`) runs the entire Detect → Validate → Size →
+Execute → Monitor loop with no human in the loop, inside a hard safety
+envelope. Four modes:
+
+| mode | behavior |
+|---|---|
+| `off` | engine idle (default) |
+| `observe` | full decision pipeline runs and narrates itself; nothing executes |
+| `paper` | **fully automated simulated trading** against real books |
+| `live` | automated live trading — only while explicitly **ARMED** |
+
+Every tick (30s, alongside the scanner):
+
+1. **Exits first, always** — target / hard stop / trailing stop / time stop /
+   pre-close flatten, evaluated per managed lot. Exits are risk-reducing, so
+   the risk engine relaxes entry-side microstructure blocks to warnings for
+   them (kill switch still halts everything).
+2. **Circuit breaker** — session realized loss beyond the configured budget
+   halts entries (exits keep running) and auto-disarms live mode.
+3. **Entries** — recent signals → policy (score floor, regime gating,
+   per-market dedupe, hourly rate cap, session notional budget) → Thompson
+   ranking → independent risk-engine approval → IOC execution (unfilled
+   remainder canceled immediately). Sizing uses **uncertainty-shrunk Kelly**:
+   the Beta-posterior lower bound of the strategy's win rate, so unproven
+   strategies size tiny and only scale with realized proof.
+4. **Learning** — realized exits update each strategy's Beta(α,β) posterior;
+   the **Thompson-sampling bandit** shifts future allocation toward what is
+   actually working. Posteriors, W/L records and realized PnL per strategy are
+   shown on the autopilot page — computed, never asserted.
+
+Every decision — including every skip — is recorded with its reason in the
+decision tape, the live feed, and the audit log.
+
+**Live arming ritual.** Setting mode to `live` does not trade. The user must
+additionally type `ARM LIVE AUTOPILOT` with a TTL (5min–8h). While armed, the
+engine may submit live limit orders inside the envelope without per-order
+prompts — the arming ritual is the standing confirmation, recorded as such in
+the audit trail. The breaker or TTL expiry disarms automatically; arming is
+held in memory only and never survives a restart. All existing gates
+(`LIVE_TRADING_ENABLED`, settings opt-in, terms, kill switch, CLOB
+credentials) still apply, and the risk engine still vets every order.
+
 ## Kill switch
 
 The red **kill** button (nav bar) or Settings → API/Wallet: disables all
-trading, cancels open paper orders and live intents, and stops the scanners.
-Both engage and release are audit-logged.
+trading (including the autopilot), cancels open paper orders and live
+intents, and stops the scanners. Both engage and release are audit-logged.
 
 ---
 
@@ -168,8 +215,21 @@ detail`) — nothing is opaque. Registry: `src/lib/engine/signals/registry.ts`.
    arbitrage).
 5. **Closing Soon** — near-resolution markets with liquidity, spread,
    uncertainty and settlement-clarity context.
+6. **Fair-Value Dislocation** — a self-scaling **Kalman filter** over each
+   market's price series yields a latent fair-value estimate; prints >2σ from
+   it (after costs) fire mean-reversion signals, gated to *calm* regimes. The
+   filtered fair value doubles as the model win-probability handed to the
+   risk engine, so sizing is model-driven.
+7. **Microstructure Flow** — **Stoikov micro-price** divergence + near-mid
+   book imbalance + aggressor imbalance on the public tape (normalized to the
+   YES token) compose a short-horizon pressure score; fires only when the
+   components agree on a deep-enough book.
 
-Add a strategy: implement `SignalStrategy`, append it to `STRATEGIES`.
+A **volatility/trend regime classifier** (calm / trending / chaotic) gates
+which strategy styles may act — mean reversion needs a stable anchor,
+momentum needs persistence. Add a strategy: implement `SignalStrategy`,
+append it to `STRATEGIES`; the scanner, autopilot, bandit, UI and audit trail
+pick it up automatically.
 
 ### Risk engine
 
@@ -191,12 +251,62 @@ execution at bar `i+1`), the cost model (spread, slippage, fees) is applied
 per side, position sizing compounds on equity at entry, and every result is
 labeled **HISTORICAL SIMULATION** with its assumptions list.
 
+## Performance architecture
+
+The app is split into an instrumented **hot path** and an async **cold path**.
+Internal hot-path operations on in-memory data are held to a **<20ms p95**
+budget; external Polymarket/wallet/chain latency is measured separately and
+carries **no latency promise** — the app never fakes speed by hiding stale
+data or skipping risk checks.
+
+Hot path (in-memory, measured):
+- **Market registry** — O(1) lookups by condition id / token id / slug with a
+  precomputed token→price map, rebuilt on each upstream refresh.
+- **Exposure cache** — order previews and risk checks read portfolio/exposure
+  state from memory (no store/DB round-trip); fills, cancels and resets
+  invalidate it asynchronously; a stale cache **blocks** trading until
+  refreshed rather than being silently served.
+- **Settings cache** — 3s read-through cache so previews never hit the DB
+  under the prisma driver.
+- Pure filter/sort pipeline for the scanner table (`src/lib/scannerQuery.ts`).
+
+Cold path (async, never blocks trading):
+- Audit log persistence (append-only batch queue), portfolio snapshots,
+  backtests, Monte Carlo, historical analytics.
+
+Frontend:
+- Virtualized scanner table (TanStack Virtual) with memoized rows — a single
+  tick never re-renders the table.
+- One shared SSE connection per tab with requestAnimationFrame-batched
+  delivery; overflow drops oldest events (latest state authoritative) and
+  counts them.
+- Live order-book **WebSocket deltas** for the selected market, applied
+  incrementally and flushed once per frame.
+- Heavy panels (React Flow decision tree, Monte Carlo) load lazily outside
+  the dashboard's critical bundle.
+
+Observability (`/perf` + `/api/perf`):
+- p50/p95/p99 ring-buffer histograms for every `hot.*`, `upstream.*` and
+  cold-path metric, with budget pass/fail per row.
+- Cache hit rate, exposure-cache reads/invalidations, audit queue depth,
+  registry size/age, client SSE ingest/drop counts and flush p95.
+- Every `measure()` also opens an **OpenTelemetry** span
+  (`@opentelemetry/api` facade — no-op until an operator wires an SDK, full
+  tracing when they do).
+
+Benchmarks (`tests/perf/hotpath.test.ts`, run in `npm test`) enforce the
+budget: scanner filter+sort over 1,000 and 10,000 synthetic markets, full
+risk-check evaluation, 7-strategy single-market re-score, Kalman filtering,
+registry rebuilds, and a simulated 1,000-updates/second ingest — all asserted
+<20ms p95.
+
 ## Testing
 
 ```bash
-npm test                # 73 tests: unit (signals, risk, kelly, paper engine,
-                        # monte carlo, backtester) + integration (Gamma/CLOB/
-                        # Data API adapters with recorded fixtures, offline)
+npm test                # 113 tests: unit (signals, risk, kelly, paper engine,
+                        # monte carlo, backtester, kalman/microstructure/regime,
+                        # bandit/policy/exits) + integration (API adapters with
+                        # recorded fixtures) + hot-path perf benchmarks
 npx tsc --noEmit        # strict type-check
 npm run build           # production build
 ```

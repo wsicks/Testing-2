@@ -80,6 +80,10 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
   const now = input.now ?? Date.now();
   const checks: RiskCheck[] = [];
   const reasons: string[] = [];
+  // risk-reducing exits must always be executable: microstructure/data checks
+  // downgrade to warnings for SELLs closing an existing position
+  const exitRelax = Boolean(proposal.isExit) && proposal.side === "SELL";
+  const blockUnlessExit: "block" | "warn" = exitRelax ? "warn" : "block";
 
   const entryPrice = proposal.price;
   const notionalUsd = entryPrice * proposal.size;
@@ -107,7 +111,7 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
       market
         ? `Market data is ${ageSecs.toFixed(0)}s old (max ${settings.staleDataMaxSecs}s)`
         : "No market data attached to proposal",
-      "block",
+      blockUnlessExit,
       ageSecs === Infinity ? undefined : ageSecs,
       settings.staleDataMaxSecs,
     ),
@@ -132,7 +136,7 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
       spread === undefined
         ? "Spread unavailable"
         : `Spread ${(spread * 100).toFixed(1)}c vs max ${(settings.maxSpread * 100).toFixed(1)}c`,
-      "block",
+      blockUnlessExit,
       spread,
       settings.maxSpread,
     ),
@@ -144,7 +148,7 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
       "liquidity_floor",
       liquidity >= settings.minLiquidityUsd,
       `Liquidity $${Math.round(liquidity).toLocaleString()} vs min $${settings.minLiquidityUsd.toLocaleString()}`,
-      "block",
+      blockUnlessExit,
       liquidity,
       settings.minLiquidityUsd,
     ),
@@ -156,7 +160,7 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
       "resolution_clarity",
       clarity.level !== "low",
       `Resolution clarity ${clarity.level.toUpperCase()}: ${clarity.reason}`,
-      "block",
+      blockUnlessExit,
     ),
   );
 
@@ -203,7 +207,11 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
   );
 
   // ── signal quality ──────────────────────────────────────────────────────
-  if (proposal.signalScore !== undefined) {
+  if (exitRelax) {
+    checks.push(
+      rc("signal_score", true, "Exit of an existing position — signal threshold not applied", "warn"),
+    );
+  } else if (proposal.signalScore !== undefined) {
     checks.push(
       rc(
         "signal_score",
@@ -326,7 +334,7 @@ export function evaluateTrade(input: RiskEngineInput): RiskAssessment {
         "liquidity_exit_risk",
         ratio < 0.25,
         `Position is ${(ratio * 100).toFixed(1)}% of near-mid exit depth ($${Math.round(exitDepth).toLocaleString()})`,
-        ratio < 0.5 ? "warn" : "block",
+        exitRelax || ratio < 0.5 ? "warn" : "block",
         ratio,
         0.25,
       ),

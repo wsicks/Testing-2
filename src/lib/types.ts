@@ -119,6 +119,8 @@ export interface SignalContext {
   book?: OrderBookData;
   /** YES-token price history, oldest first */
   history?: PricePoint[];
+  /** recent public trades (tape), newest first */
+  trades?: RecentTrade[];
   /** other markets considered by cross-market strategies */
   relatedMarkets?: NormalizedMarket[];
   settings: RiskSettings;
@@ -155,6 +157,8 @@ export interface PaperOrder {
   outcome?: string;
   marketTitle?: string;
   category?: string;
+  /** who initiated this order */
+  origin?: "manual" | "autopilot";
   side: OrderSide;
   orderType: OrderType;
   price: number;
@@ -182,6 +186,7 @@ export interface LiveOrderIntent {
   tokenId: string;
   outcome?: string;
   marketTitle?: string;
+  origin?: "manual" | "autopilot";
   side: OrderSide;
   orderType: OrderType;
   price: number;
@@ -273,6 +278,8 @@ export interface UserPrefs {
   paperStartingCash: number;
   /** Polygon address used for read-only wallet analytics (no keys) */
   watchWallet?: string;
+  /** automated-trading policy & envelope */
+  autopilot: AutopilotConfig;
 }
 
 export type AppSettings = RiskSettings & UserPrefs;
@@ -294,6 +301,12 @@ export interface TradeProposal {
   winProbability?: number;
   signalScore?: number;
   signalId?: string;
+  /**
+   * risk-reducing exit of an existing position: microstructure blocks
+   * (spread/liquidity/freshness/clarity) downgrade to warnings so positions
+   * can always be flattened
+   */
+  isExit?: boolean;
 }
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -386,7 +399,13 @@ export type FeedEventType =
   | "ws_reconnect"
   | "user_action"
   | "scanner_tick"
-  | "kill_switch";
+  | "kill_switch"
+  | "autopilot_entry"
+  | "autopilot_exit"
+  | "autopilot_skip"
+  | "autopilot_halt"
+  | "autopilot_armed"
+  | "autopilot_disarmed";
 
 export interface FeedEvent {
   id: string;
@@ -411,6 +430,103 @@ export interface ExecutionStage {
   label: string;
   status: StageStatus;
   detail?: string;
+}
+
+// ── Autopilot (automated trading) ────────────────────────────────────────────
+
+export type AutopilotMode = "off" | "observe" | "paper" | "live";
+
+export interface AutopilotConfig {
+  mode: AutopilotMode;
+  /** strategies the policy may act on */
+  enabledStrategies: string[];
+  /** minimum signal score to consider an entry */
+  minScore: number;
+  /** notional per entry, USD (bounded by risk-engine caps) */
+  perTradeUsd: number;
+  maxOpenPositions: number;
+  maxTradesPerHour: number;
+  /** total entry notional allowed per armed/enabled session */
+  maxSessionNotionalUsd: number;
+  /** circuit breaker: realized session loss that halts entries + disarms */
+  sessionMaxLossUsd: number;
+  /** exit management */
+  targetPct: number;
+  stopPct: number;
+  /** trailing stop distance (activates after price moves in favor) */
+  trailPct: number;
+  maxHoldMin: number;
+  /** flatten positions this many minutes before market close */
+  flattenBeforeCloseMin: number;
+  /** only trade strategies whose style matches the detected regime */
+  requireRegimeMatch: boolean;
+}
+
+export interface AutopilotDecision {
+  id: string;
+  ts: number;
+  kind: "entry" | "exit" | "skip" | "halt" | "arm" | "disarm";
+  strategy?: string;
+  conditionId?: string;
+  marketQuestion?: string;
+  side?: OrderSide;
+  price?: number;
+  size?: number;
+  reason: string;
+  orderId?: string;
+  approved?: boolean;
+}
+
+export interface BanditArm {
+  strategy: string;
+  /** Beta posterior over per-trade win probability */
+  alpha: number;
+  beta: number;
+  mean: number;
+  /** last Thompson sample drawn (for display) */
+  sampled?: number;
+  wins: number;
+  losses: number;
+  realizedPnlUsd: number;
+}
+
+export interface AutopilotSession {
+  startedAt?: number;
+  trades: number;
+  notionalUsd: number;
+  realizedPnlUsd: number;
+  tradesLastHour: number;
+  breakerTripped: boolean;
+  breakerReason?: string;
+  /** live arming expiry (epoch ms); undefined = not armed */
+  armedUntil?: number;
+  lastTickAt?: number;
+}
+
+export interface AutopilotStatus {
+  config: AutopilotConfig;
+  session: AutopilotSession;
+  bandit: BanditArm[];
+  decisions: AutopilotDecision[];
+  managedPositions: number;
+  liveGateOpen: boolean;
+  liveGateReasons: string[];
+}
+
+/** tracked lot the autopilot manages exits for */
+export interface ManagedPosition {
+  tokenId: string;
+  conditionId?: string;
+  marketQuestion?: string;
+  outcome?: string;
+  strategy: string;
+  mode: "paper" | "live";
+  entryPrice: number;
+  size: number;
+  openedAt: number;
+  /** best price seen since entry (for trailing stop) */
+  peakPrice: number;
+  endDate?: string;
 }
 
 // ── Backtesting ───────────────────────────────────────────────────────────────

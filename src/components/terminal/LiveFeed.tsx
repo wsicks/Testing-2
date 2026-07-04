@@ -23,6 +23,12 @@ const TYPE_LABEL: Record<FeedEventType, string> = {
   user_action: "USER",
   scanner_tick: "SCAN",
   kill_switch: "KILL",
+  autopilot_entry: "AP+",
+  autopilot_exit: "AP-",
+  autopilot_skip: "APSK",
+  autopilot_halt: "HALT",
+  autopilot_armed: "ARM",
+  autopilot_disarmed: "DSRM",
 };
 
 export function LiveFeed({ className }: { className?: string }) {

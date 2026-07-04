@@ -5,7 +5,10 @@
 // driven by the same detail query + ticket state.
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useMarketDetail } from "@/hooks/api";
+import { useClobWs } from "@/hooks/useClobWs";
+import { computeMicroMetrics } from "@/lib/engine/micro/microstructure";
 import { fmtCents, fmtDateTime, fmtTimeUntil, fmtUsd } from "@/lib/format";
 import { Panel } from "@/components/ui/panel";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +19,12 @@ import { PriceChart, DepthChart } from "./charts";
 import { BookLadder, TradesList } from "./BookPanel";
 import { OrderTicket, ticketStages, type TicketState } from "./OrderTicket";
 import { ExecutionCycle } from "./ExecutionCycle";
-import { DecisionTree } from "./DecisionTree";
+
+// React Flow is heavy — load it lazily so the dashboard shell stays small
+const DecisionTree = dynamic(
+  () => import("./DecisionTree").then((m) => m.DecisionTree),
+  { ssr: false, loading: () => <Panel title="strategy decision tree"><EmptyNote>loading…</EmptyNote></Panel> },
+);
 
 const INTERVALS = ["1d", "1w", "1m", "max"] as const;
 
@@ -31,6 +39,11 @@ export function MarketWorkspace({
   const { data, isLoading } = useMarketDetail(conditionId, interval);
   const [ticket, setTicket] = useState<TicketState>({ previewing: false });
   const m = data?.market;
+  // live book deltas straight from the public CLOB websocket (falls back to
+  // the polled snapshot if the socket can't connect)
+  const { book: liveBook, wsStatus } = useClobWs(m?.yesTokenId);
+  const yesBook = liveBook ?? data?.yesBook;
+  const micro = yesBook ? computeMicroMetrics(yesBook, data?.trades ?? []) : null;
 
   if (!conditionId) {
     return (
@@ -118,24 +131,72 @@ export function MarketWorkspace({
         </Panel>
 
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          <Panel title="order book (yes)" bodyClassName="p-1.5">
-            <BookLadder book={data?.yesBook} />
+          <Panel
+            title="order book (yes)"
+            bodyClassName="p-1.5"
+            right={
+              wsStatus === "live" ? (
+                <Badge variant="pos">live ws</Badge>
+              ) : wsStatus === "connecting" ? (
+                <Badge>ws…</Badge>
+              ) : (
+                <Badge>polled</Badge>
+              )
+            }
+          >
+            <BookLadder book={yesBook} />
           </Panel>
-          <Panel title="depth" bodyClassName="p-1">
-            {data?.yesBook ? (
-              <DepthChart bids={data.yesBook.bids} asks={data.yesBook.asks} />
+          <Panel title="depth & microstructure" bodyClassName="p-1">
+            {yesBook ? (
+              <DepthChart bids={yesBook.bids} asks={yesBook.asks} />
             ) : (
               <EmptyNote>no book</EmptyNote>
             )}
             <div className="mt-1 grid grid-cols-2 gap-1 text-2xs">
               <div className="border border-line bg-paper px-1.5 py-0.5">
                 <span className="label">bid depth ±5c</span>{" "}
-                <Num tone="pos">{fmtUsd(data?.yesBook?.bidDepthUsd, 0)}</Num>
+                <Num tone="pos">{fmtUsd(yesBook?.bidDepthUsd, 0)}</Num>
               </div>
               <div className="border border-line bg-paper px-1.5 py-0.5">
                 <span className="label">ask depth ±5c</span>{" "}
-                <Num tone="neg">{fmtUsd(data?.yesBook?.askDepthUsd, 0)}</Num>
+                <Num tone="neg">{fmtUsd(yesBook?.askDepthUsd, 0)}</Num>
               </div>
+              {micro ? (
+                <>
+                  <div className="border border-line bg-paper px-1.5 py-0.5">
+                    <span className="label">micro-price</span>{" "}
+                    <Num tone={micro.microDivergence}>
+                      {fmtCents(micro.microPrice)} ({micro.microDivergence >= 0 ? "+" : ""}
+                      {(micro.microDivergence * 100).toFixed(2)}c)
+                    </Num>
+                  </div>
+                  <div className="border border-line bg-paper px-1.5 py-0.5">
+                    <span className="label">book / tape lean</span>{" "}
+                    <Num tone={micro.bookImbalance}>{(micro.bookImbalance * 100).toFixed(0)}%</Num>
+                    {" / "}
+                    <Num tone={micro.tapeImbalance}>{(micro.tapeImbalance * 100).toFixed(0)}%</Num>
+                  </div>
+                  <div className="col-span-2 border border-line bg-paper px-1.5 py-0.5">
+                    <span className="label">flow pressure</span>
+                    <div className="relative mt-0.5 h-2 border border-line bg-panel">
+                      <div className="absolute inset-y-0 left-1/2 w-px bg-line-strong" />
+                      <div
+                        className={micro.pressure >= 0 ? "absolute inset-y-0 bg-pos/40" : "absolute inset-y-0 bg-neg/40"}
+                        style={
+                          micro.pressure >= 0
+                            ? { left: "50%", width: `${(micro.pressure * 50).toFixed(1)}%` }
+                            : { right: "50%", width: `${(-micro.pressure * 50).toFixed(1)}%` }
+                        }
+                      />
+                    </div>
+                    <div className="flex justify-between text-3xs text-ink-faint">
+                      <span>sell pressure</span>
+                      <Num tone={micro.pressure}>{(micro.pressure * 100).toFixed(0)}%</Num>
+                      <span>buy pressure</span>
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           </Panel>
           <Panel title="recent trades" bodyClassName="p-1.5">

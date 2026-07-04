@@ -19,6 +19,23 @@ export interface HttpOpts {
   timeoutMs?: number;
 }
 
+/**
+ * Optional latency hook — the server registers a recorder so EXTERNAL
+ * Polymarket API round-trips show up in the perf panel under `upstream.*`.
+ * These are external-infrastructure timings and carry no <20ms promise.
+ */
+let latencyHook: ((label: string, ms: number) => void) | null = null;
+export function setUpstreamLatencyHook(fn: (label: string, ms: number) => void): void {
+  latencyHook = fn;
+}
+
+function upstreamLabel(url: string): string {
+  if (url.includes("gamma-api")) return "upstream.gamma";
+  if (url.includes("clob.")) return "upstream.clob";
+  if (url.includes("data-api")) return "upstream.data";
+  return "upstream.other";
+}
+
 export async function getJson<T>(
   url: string,
   opts: HttpOpts = {},
@@ -26,6 +43,7 @@ export async function getJson<T>(
   const fetchFn = opts.fetchFn ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
+  const t0 = Date.now();
   try {
     const res = await fetchFn(url, {
       signal: controller.signal,
@@ -45,6 +63,7 @@ export async function getJson<T>(
     throw new PolymarketApiError(`Request failed: ${msg}`, url);
   } finally {
     clearTimeout(timer);
+    latencyHook?.(upstreamLabel(url), Date.now() - t0);
   }
 }
 

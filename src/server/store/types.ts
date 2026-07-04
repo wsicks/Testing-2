@@ -83,6 +83,10 @@ export interface Store {
   addPortfolioSnapshot(s: PortfolioSnapshotRecord): Promise<void>;
   listPortfolioSnapshots(mode: TerminalMode, limit?: number): Promise<PortfolioSnapshotRecord[]>;
 
+  // generic JSON key-value (bandit state, autopilot registry, …)
+  getKV<T>(key: string): Promise<T | undefined>;
+  setKV<T>(key: string, value: T): Promise<void>;
+
   // maintenance
   resetMode(mode: TerminalMode): Promise<void>;
 }

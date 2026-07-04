@@ -1,7 +1,8 @@
 // Standalone background worker: continuous market scanning, signal
-// generation, paper-order settlement and portfolio snapshots — independent of
-// web traffic. Run with `npm run worker` (shares the store with the web app
-// when STORAGE_DRIVER=prisma; with the memory store it shares the JSON file).
+// generation, autopilot ticks, paper-order settlement and portfolio
+// snapshots — independent of web traffic. Run with `npm run worker` (shares
+// the store with the web app when STORAGE_DRIVER=prisma; with the memory
+// store it shares the JSON file). The autopilot tick runs inside scanOnce.
 
 import { scanOnce } from "../src/server/scanner";
 

@@ -164,6 +164,7 @@ model PaperOrder {
   outcome      String?
   marketTitle  String?
   category     String?
+  origin       String? // manual | autopilot
   side         String // BUY | SELL
   orderType    String    @default("limit") // limit | market
   price        Float
@@ -190,6 +191,7 @@ model LiveOrderIntent {
   tokenId          String
   outcome          String?
   marketTitle      String?
+  origin           String? // manual | autopilot
   side             String
   orderType        String    @default("limit")
   price            Float

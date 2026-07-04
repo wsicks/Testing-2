@@ -1,4 +1,4 @@
-import type { AppSettings } from "./types";
+import type { AppSettings, AutopilotConfig } from "./types";
 
 export const GAMMA_API_URL =
   process.env.GAMMA_API_URL ?? "https://gamma-api.polymarket.com";
@@ -16,6 +16,28 @@ export const POLYMARKET_EVENT_URL = (slug: string) =>
   `https://polymarket.com/event/${slug}`;
 
 export const APP_NAME = "POLYQUANT";
+
+/**
+ * Autopilot defaults: OFF until the user enables it. Paper autopilot is one
+ * switch; live autopilot additionally requires the live gate plus an explicit
+ * time-boxed arming ritual. Sizing is deliberately small.
+ */
+export const DEFAULT_AUTOPILOT: AutopilotConfig = {
+  mode: "off",
+  enabledStrategies: ["dislocation", "microstructure", "price_movement"],
+  minScore: 60,
+  perTradeUsd: 25,
+  maxOpenPositions: 5,
+  maxTradesPerHour: 12,
+  maxSessionNotionalUsd: 500,
+  sessionMaxLossUsd: 50,
+  targetPct: 12,
+  stopPct: 8,
+  trailPct: 6,
+  maxHoldMin: 240,
+  flattenBeforeCloseMin: 30,
+  requireRegimeMatch: true,
+};
 
 export const DEFAULT_SETTINGS: AppSettings = {
   // risk
@@ -43,6 +65,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   killSwitch: false,
   scannersEnabled: true,
   paperStartingCash: 10_000,
+  autopilot: DEFAULT_AUTOPILOT,
 };
 
 /** how many markets the scanner pulls from Gamma per refresh */
