@@ -1,17 +1,26 @@
-// DISCLOSURE RADAR — official public documents as DELAYED context.
+// DISCLOSURE RADAR — official public documents/events as DELAYED context.
 //
-// Live adapter: Federal Register API (keyless, public domain, verified).
+// Live adapters (both keyless, public domain, verified):
+//   Federal Register — rulemaking documents mapped to policy-linked markets
+//   NWS active alerts — Severe/Extreme weather alerts mapped to weather
+//     markets. This is the first Official Calendar Shock data slice: an
+//     official source publishing state changes on its own schedule. It is
+//     CONTEXT only — the calendar_shock trading feature stays in the
+//     lifecycle (idea → data_connected once this feed proves stable) and
+//     nothing trades from it.
+//
 // Congress.gov / Regulations.gov ship as registry entries that unlock with
 // free API keys; House/Senate financial disclosures are marked
 // manual_review because no permitted structured API exists (we do not
 // scrape). Every record is context ONLY: humanReviewRequired is always
-// true, filing lag is displayed, and nothing here generates a trade.
+// true, publication lag is displayed, and nothing here generates a trade.
 
 import type { DisclosureRecord } from "@/lib/alpha/types";
 import { termOverlap } from "@/lib/engine/signals/crossMarket";
+import { categorizeMarket } from "@/lib/alpha/score";
 import { audit } from "../audit";
 import { getMarkets } from "../marketData";
-import { listDisclosures, saveDisclosures } from "./repo";
+import { listDisclosures, listFeatures, saveDisclosures, upsertFeature } from "./repo";
 
 const FEDREG_URL = "https://www.federalregister.gov/api/v1";
 
@@ -50,6 +59,53 @@ async function fetchTopic(term: string): Promise<FedRegDoc[]> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── NWS active severe alerts (Official Calendar Shock, slice 1) ─────────────
+
+interface NwsAlert {
+  id: string;
+  properties: {
+    event?: string;
+    headline?: string;
+    severity?: string;
+    areaDesc?: string;
+    effective?: string;
+    senderName?: string;
+  };
+}
+
+async function fetchNwsAlerts(): Promise<NwsAlert[]> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const res = await fetch(
+      "https://api.weather.gov/alerts/active?severity=Severe,Extreme&message_type=alert",
+      {
+        signal: ctrl.signal,
+        headers: {
+          accept: "application/geo+json",
+          "user-agent": "eventquant-terminal (calendar-shock research)",
+        },
+      },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { features?: NwsAlert[] };
+    return body.features ?? [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** first successful NWS ingest moves calendar_shock idea → data_connected */
+async function markCalendarShockConnected(): Promise<void> {
+  const features = await listFeatures();
+  const f = features.find((x) => x.id === "calendar_shock");
+  if (!f || f.status !== "idea") return;
+  f.status = "data_connected";
+  f.updatedAt = Date.now();
+  await upsertFeature(f);
+  await audit("scanner", "alpha_feature_data_connected", "calendar_shock: NWS severe-alert feed verified and ingesting — feature advances idea → data_connected (backtest + paper testing still ahead)", {});
 }
 
 export async function refreshDisclosures(): Promise<number> {
@@ -104,12 +160,53 @@ export async function refreshDisclosures(): Promise<number> {
       /* one topic failing must not kill the sweep */
     }
   }
+  // NWS severe/extreme alerts → weather-market context (calendar shock #1)
+  let nwsAdded = 0;
+  try {
+    const alerts = await fetchNwsAlerts();
+    const weatherMarkets = markets.filter(
+      (m) => categorizeMarket({ question: m.question, category: m.category, tags: m.tags }) === "weather",
+    );
+    for (const a of alerts.slice(0, 20)) {
+      const p = a.properties;
+      const id = `nws:${a.id.split("/").pop() ?? a.id}`;
+      if (seen.has(id) || !p.event) continue;
+      const hay = `${p.event} ${p.areaDesc ?? ""}`;
+      const related = weatherMarkets
+        .map((m) => ({ conditionId: m.conditionId, question: m.question, overlap: termOverlap(hay, m.question) }))
+        .filter((r) => r.overlap >= 0.15)
+        .sort((a2, b) => b.overlap - a2.overlap)
+        .slice(0, 3);
+      const effMs = p.effective ? new Date(p.effective).getTime() : now;
+      fresh.push({
+        id,
+        source: "nws",
+        docType: p.event,
+        title: p.headline ?? `${p.severity ?? ""} ${p.event} — ${p.areaDesc?.slice(0, 80) ?? ""}`,
+        url: a.id,
+        filingDate: p.effective ?? new Date(now).toISOString(),
+        lagDays: Number(((now - effMs) / 86_400_000).toFixed(2)),
+        agency: p.senderName ?? "National Weather Service",
+        policyTags: ["weather", (p.severity ?? "severe").toLowerCase()],
+        relatedMarkets: related,
+        confidence: related.length ? Math.min(0.7, related[0].overlap) : 0.1,
+        humanReviewRequired: true,
+        fetchedAt: now,
+      });
+      seen.add(id);
+      nwsAdded += 1;
+    }
+    if (nwsAdded > 0 || alerts.length > 0) await markCalendarShockConnected();
+  } catch {
+    /* NWS outage must not kill the Federal Register sweep results */
+  }
+
   if (fresh.length) {
     await saveDisclosures([...existing, ...fresh]);
     await audit(
       "scanner",
       "disclosures_refreshed",
-      `Disclosure Radar: ${fresh.length} new Federal Register document(s) mapped (context only — human review required)`,
+      `Disclosure Radar: ${fresh.length} new record(s) — ${fresh.length - nwsAdded} Federal Register, ${nwsAdded} NWS severe-alert (context only — human review required)`,
       {},
     );
   }

@@ -38,6 +38,7 @@ export async function GET() {
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("tick") }),
   z.object({ action: z.literal("research") }),
+  z.object({ action: z.literal("backtest"), featureId: z.string() }),
   z.object({ action: z.literal("prosecute"), featureId: z.string() }),
   z.object({
     action: z.literal("approve"),
@@ -67,6 +68,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ result: await foundryTick(true) });
     case "research":
       return NextResponse.json({ ideas: await generateResearchIdeas() });
+    case "backtest": {
+      const { runWalkForwardBacktest } = await import("@/server/alpha/backtester");
+      const res = await runWalkForwardBacktest(body.featureId);
+      return res.ok
+        ? NextResponse.json(res)
+        : NextResponse.json({ ...res, error: res.reason }, { status: 400 });
+    }
     case "prosecute":
       return NextResponse.json({ verdict: await runProsecutor(body.featureId) });
     case "approve": {

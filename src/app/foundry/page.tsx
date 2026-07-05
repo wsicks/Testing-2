@@ -108,10 +108,41 @@ function FeatureCard({ f }: { f: FeatureRow }) {
               ))}
             </div>
           ) : null}
+          {f.lastBacktest ? (
+            <div className="border-t border-line/60 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="label">walk-forward backtest</span>
+                <Badge variant={f.lastBacktest.avgNet > 0 ? "pos" : "neg"}>
+                  {(f.lastBacktest.avgNet * 100).toFixed(2)}c net / entry
+                </Badge>
+                <span className="text-3xs text-ink-faint">
+                  {f.lastBacktest.outcomes} entries · {f.lastBacktest.markets} markets ·{" "}
+                  {f.lastBacktest.positiveFolds}/{f.lastBacktest.folds.length} folds positive ·
+                  best market {(f.lastBacktest.singleMarketShare * 100).toFixed(0)}% of gross ·{" "}
+                  {fmtAgo(f.lastBacktest.ranAt)}
+                </span>
+              </div>
+              <div className="flex gap-3 pt-0.5">
+                {f.lastBacktest.folds.map((fold) => (
+                  <span key={fold.fold} className="text-3xs">
+                    <span className="label">fold {fold.fold + 1}</span>{" "}
+                    <Num tone={fold.avgNet}>{(fold.avgNet * 100).toFixed(2)}c</Num>
+                    <span className="text-ink-faint"> n={fold.n}</span>
+                  </span>
+                ))}
+              </div>
+              <p className="text-3xs text-ink-faint">
+                historical simulation — {f.lastBacktest.assumptions[0]}
+              </p>
+            </div>
+          ) : null}
           {f.failureReason ? (
             <p className="text-neg">failure: {f.failureReason}{f.lessons ? ` — lessons: ${f.lessons}` : ""}</p>
           ) : null}
           <div className="flex gap-1 border-t border-line/60 pt-1">
+            <Button size="xs" onClick={() => act.mutate({ action: "backtest", featureId: f.id })} disabled={act.isPending}>
+              run backtest
+            </Button>
             <Button size="xs" onClick={() => act.mutate({ action: "prosecute", featureId: f.id })} disabled={act.isPending}>
               run prosecutor
             </Button>
@@ -130,6 +161,9 @@ function FeatureCard({ f }: { f: FeatureRow }) {
               </Button>
             ) : null}
           </div>
+          {act.isError ? (
+            <p className="text-3xs text-neg">{(act.error as Error)?.message ?? "action failed"}</p>
+          ) : null}
         </div>
       ) : null}
     </div>

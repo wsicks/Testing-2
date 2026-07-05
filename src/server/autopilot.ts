@@ -246,7 +246,14 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         stillManaged.push(pos);
         continue;
       }
-      const executed = await executeExit(pos, decision.reason ?? "exit", decision.detail, config.mode);
+      const isPartial = decision.action === "partial_exit";
+      const executed = await executeExit(
+        pos,
+        decision.reason ?? "exit",
+        decision.detail,
+        config.mode,
+        isPartial ? decision.sellSize : undefined,
+      );
       if (executed.closedSize > 0) {
         exits += 1;
         s.session.realizedPnlUsd = Number(
@@ -258,7 +265,12 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         await store.setKV(KV_BANDIT, bs);
       }
       if (executed.remaining > 0) {
-        stillManaged.push({ ...pos, size: executed.remaining });
+        stillManaged.push({
+          ...pos,
+          size: executed.remaining,
+          // a filled plan tranche never re-fires; a blocked one retries
+          partialDone: pos.partialDone || (isPartial && executed.closedSize > 0),
+        });
       }
     }
     managed = stillManaged;
@@ -452,6 +464,9 @@ async function executeEntry(
     // the CLOB accepted the order
     if (confirmed.status === "submitted") {
       const managed = await getManaged();
+      const livePlanMeta = signal.meta?.exitPlan as
+        | { partialExitAt?: number; fullExitAt?: number }
+        | undefined;
       managed.push({
         tokenId: proposal.tokenId,
         conditionId: proposal.conditionId,
@@ -464,6 +479,10 @@ async function executeEntry(
         openedAt: Date.now(),
         peakPrice: proposal.price,
         endDate,
+        exitPlan:
+          typeof livePlanMeta?.partialExitAt === "number" && typeof livePlanMeta?.fullExitAt === "number"
+            ? { partialAt: livePlanMeta.partialExitAt, fullAt: livePlanMeta.fullExitAt }
+            : undefined,
       });
       await setManaged(managed);
       return true;
@@ -501,6 +520,15 @@ async function executeEntry(
     return false;
   }
   const managed = await getManaged();
+  // carry the signal's mechanical exit plan (ECL: 50%/85% edge capture) —
+  // the exit manager honors it ahead of the generic %-target
+  const planMeta = signal.meta?.exitPlan as
+    | { partialExitAt?: number; fullExitAt?: number }
+    | undefined;
+  const exitPlan =
+    typeof planMeta?.partialExitAt === "number" && typeof planMeta?.fullExitAt === "number"
+      ? { partialAt: planMeta.partialExitAt, fullAt: planMeta.fullExitAt }
+      : undefined;
   managed.push({
     tokenId: proposal.tokenId,
     conditionId: proposal.conditionId,
@@ -513,6 +541,7 @@ async function executeEntry(
     openedAt: Date.now(),
     peakPrice: order.avgFillPrice ?? proposal.price,
     endDate,
+    exitPlan,
   });
   await setManaged(managed);
   record({
@@ -536,7 +565,10 @@ async function executeExit(
   reason: string,
   detail: string,
   mode: "observe" | "paper" | "live" | "off",
+  /** shares to sell; defaults to the whole lot */
+  sellSize?: number,
 ): Promise<{ closedSize: number; remaining: number; pnlUsd: number }> {
+  const toSell = Math.min(pos.size, Math.max(1, sellSize ?? pos.size));
   if (mode === "live" && pos.mode === "live") {
     // live exits go through the intent pipeline under the armed session
     if (!isArmed()) {
@@ -553,17 +585,17 @@ async function executeExit(
       side: "SELL",
       orderType: "limit",
       price,
-      size: pos.size,
+      size: toSell,
       origin: "autopilot",
       isExit: true,
     });
     if (intent.status !== "rejected") {
       await confirmLiveIntent(intent.id, undefined, { autopilotArmed: true });
     }
-    record({ kind: "exit", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, side: "SELL", price, size: pos.size, orderId: intent.id, reason: `LIVE exit ${reason}: ${detail} (${intent.status})` });
+    record({ kind: "exit", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, side: "SELL", price, size: toSell, orderId: intent.id, reason: `LIVE exit ${reason}: ${detail} (${intent.status})` });
     publishFeed("autopilot_exit", `[live] exit ${pos.marketQuestion?.slice(0, 45)} — ${reason}`, {});
-    // fills are not tracked for live; treat as dispatched and stop managing
-    return { closedSize: pos.size, remaining: 0, pnlUsd: 0 };
+    // fills are not tracked for live; treat as dispatched
+    return { closedSize: toSell, remaining: pos.size - toSell, pnlUsd: 0 };
   }
 
   // paper exit — market order into the book, exit-relaxed risk checks
@@ -577,7 +609,7 @@ async function executeExit(
     side: "SELL",
     orderType: "market",
     price,
-    size: pos.size,
+    size: toSell,
     origin: "autopilot",
     isExit: true,
   });

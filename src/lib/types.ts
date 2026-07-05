@@ -680,6 +680,14 @@ export interface ManagedPosition {
   /** best price seen since entry (for trailing stop) */
   peakPrice: number;
   endDate?: string;
+  /**
+   * mechanical exit plan carried from the signal (ECL: 50% at 60% edge
+   * capture, rest at 85%) — prices in the ENTRY token's terms. Takes
+   * precedence over the generic %-target once armed.
+   */
+  exitPlan?: { partialAt: number; fullAt: number };
+  /** the plan's 50% tranche has already been taken */
+  partialDone?: boolean;
 }
 
 // ── Backtesting ───────────────────────────────────────────────────────────────

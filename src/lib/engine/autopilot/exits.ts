@@ -7,9 +7,11 @@ import type { AutopilotConfig, ManagedPosition } from "@/lib/types";
 
 export interface ExitDecision {
   position: ManagedPosition;
-  action: "hold" | "exit";
-  reason?: "pre_close" | "stop" | "trail" | "target" | "time";
+  action: "hold" | "exit" | "partial_exit";
+  reason?: "pre_close" | "stop" | "trail" | "target" | "time" | "plan_partial" | "plan_full";
   detail: string;
+  /** shares to sell on partial_exit (~half the lot) */
+  sellSize?: number;
   /** updated peak for trailing logic */
   peakPrice: number;
 }
@@ -60,8 +62,31 @@ export function evaluateExit(
       peakPrice: peak,
     };
   }
-  // 4) target
-  if (pnlPct >= config.targetPct) {
+  // 4) mechanical exit plan from the signal (ECL) — beats the generic target
+  if (pos.exitPlan) {
+    if (markPrice >= pos.exitPlan.fullAt) {
+      return {
+        position: pos,
+        action: "exit",
+        reason: "plan_full",
+        detail: `price ${(markPrice * 100).toFixed(1)}c reached the plan's full-exit ${(pos.exitPlan.fullAt * 100).toFixed(1)}c (85% edge capture)`,
+        peakPrice: peak,
+      };
+    }
+    if (!pos.partialDone && markPrice >= pos.exitPlan.partialAt && pos.size >= 2) {
+      return {
+        position: pos,
+        action: "partial_exit",
+        reason: "plan_partial",
+        detail: `price ${(markPrice * 100).toFixed(1)}c reached the plan's partial-exit ${(pos.exitPlan.partialAt * 100).toFixed(1)}c — selling 50% (60% edge capture)`,
+        sellSize: Math.floor(pos.size / 2),
+        peakPrice: peak,
+      };
+    }
+  }
+  // 5) generic target — only for lots WITHOUT a mechanical plan: a plan
+  // owns the profit side (stop/trail/pre-close/time still protect above)
+  if (!pos.exitPlan && pnlPct >= config.targetPct) {
     return {
       position: pos,
       action: "exit",
@@ -70,7 +95,7 @@ export function evaluateExit(
       peakPrice: peak,
     };
   }
-  // 5) time stop
+  // 6) time stop
   const heldMin = (now - pos.openedAt) / 60_000;
   if (heldMin >= config.maxHoldMin) {
     return {

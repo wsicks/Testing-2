@@ -222,3 +222,30 @@ describe("registry-style ingest under sustained update load", () => {
     expect(p95(samples)).toBeLessThan(BUDGET_MS);
   });
 });
+
+describe("morphish top-gem scoring under the 20ms budget", () => {
+  it("scores 1,000 signal candidates in <20ms p95", async () => {
+    const { scoreGem } = await import("@/server/morphish");
+    const markets = universe(1_000);
+    const now = Date.now();
+    const sigs = markets.map((m, i) => ({
+      id: `s${i}`,
+      strategy: "ecl",
+      strategyLabel: "ECL",
+      conditionId: m.conditionId,
+      direction: (i % 3 === 0 ? "NEUTRAL" : "BUY_YES") as "NEUTRAL" | "BUY_YES",
+      score: 40 + (i % 60),
+      status: (i % 4 === 0 ? "rejected" : "proposed") as "rejected" | "proposed",
+      summary: "t",
+      checks: [],
+      createdAt: now,
+      meta: { edgeAfterCost: 0.02 + (i % 10) / 200, ruleClarity: 0.95, liquidityScore: 0.9, suggestedTestUsd: 20 },
+    }));
+    const samples = bench(60, () => {
+      for (let i = 0; i < sigs.length; i++) {
+        scoreGem({ sig: sigs[i], market: markets[i], experimental: i % 5 === 0, now });
+      }
+    });
+    expect(p95(samples)).toBeLessThan(BUDGET_MS);
+  });
+});

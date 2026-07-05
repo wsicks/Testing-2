@@ -249,6 +249,8 @@ export interface AlphaFeature {
   promotedAt?: number;
   retiredAt?: number;
   lastVerdict?: ProsecutorVerdict;
+  /** latest purged walk-forward replay (price-replayable features only) */
+  lastBacktest?: import("./walkforward").WalkForwardResult;
   createdAt: number;
   updatedAt: number;
 }

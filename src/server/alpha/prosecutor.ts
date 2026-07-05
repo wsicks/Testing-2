@@ -10,6 +10,7 @@ import type {
   ProsecutorVerdict,
   SourceRecord,
 } from "@/lib/alpha/types";
+import { REPLAY_RULES } from "@/lib/alpha/walkforward";
 
 const T = (
   name: string,
@@ -113,6 +114,7 @@ export function prosecute(x: ProsecutorInputs): ProsecutorVerdict {
       ev.maxAdverseRun,
       8,
     ),
+    backtestTest(feature),
     ...termsTests(feature, x.sources),
   ];
 
@@ -129,6 +131,45 @@ export function prosecute(x: ProsecutorInputs): ProsecutorVerdict {
           .map((t) => t.name)
           .join(", ")}`,
   };
+}
+
+/**
+ * Purged walk-forward verdict. Price-replayable features must run it and
+ * survive: ≥3 folds positive, no single market carrying >50% of the gross,
+ * positive net expectancy after costs. Non-replayable features (wallet,
+ * reference-driven) pass on the explicit ground that their burden sits
+ * entirely on forward paper evidence — stated, not hidden.
+ */
+function backtestTest(feature: AlphaFeature): ProsecutorTest {
+  const replayable = feature.id in REPLAY_RULES;
+  const bt = feature.lastBacktest;
+  if (!replayable) {
+    return T(
+      "backtest_walk_forward",
+      true,
+      "no point-in-time replay is possible for this feature — forward paper evidence carries the full burden (sample/expectancy/persistence tests above)",
+    );
+  }
+  if (!bt) {
+    return T(
+      "backtest_walk_forward",
+      false,
+      "feature is price-replayable but the purged walk-forward backtest has not been run",
+    );
+  }
+  const passed =
+    bt.outcomes >= 30 &&
+    bt.avgNet > 0 &&
+    bt.positiveFolds >= Math.min(3, bt.folds.length) &&
+    bt.singleMarketShare <= 0.5 &&
+    bt.luckyConcentration <= 0.5;
+  return T(
+    "backtest_walk_forward",
+    passed,
+    `${bt.outcomes} simulated entries / ${bt.markets} markets @ ${bt.resolution}: avg net ${(bt.avgNet * 100).toFixed(2)}c after ${(bt.frictionC * 100).toFixed(1)}c friction, ${bt.positiveFolds}/${bt.folds.length} folds positive, best market ${(bt.singleMarketShare * 100).toFixed(0)}% / best trade ${(bt.luckyConcentration * 100).toFixed(0)}% of gross (max 50%)`,
+    bt.avgNet,
+    0,
+  );
 }
 
 function termsTests(feature: AlphaFeature, sources: SourceRecord[]): ProsecutorTest[] {
