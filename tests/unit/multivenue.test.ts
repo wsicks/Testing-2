@@ -146,6 +146,16 @@ describe("crypto threshold parser", () => {
     expect(parseUsdAmount("dip under $1.5m")).toBe(1_500_000);
   });
 
+  it("distinguishes touch ('reach/hit/dip') from terminal ('above at close') contracts", () => {
+    expect(parseCryptoThreshold("Will Bitcoin be above $100,000 on July 31?")?.kind).toBe("terminal");
+    expect(parseCryptoThreshold("Will Bitcoin reach $72,500 in July?")).toEqual(
+      expect.objectContaining({ direction: "above", kind: "touch" }),
+    );
+    expect(parseCryptoThreshold("Will BTC dip under $50,000 in August?")).toEqual(
+      expect.objectContaining({ direction: "below", kind: "touch" }),
+    );
+  });
+
   it("returns null on ambiguity or implausible prices", () => {
     expect(parseCryptoThreshold("Will Bitcoin move this year?")).toBeNull(); // no threshold
     expect(parseCryptoThreshold("Will BTC be between $90k and $100k?")).toBeNull(); // no direction word... has neither above/below
@@ -197,6 +207,13 @@ describe("cross-venue mapper", () => {
     const ks90 = { ...ksBtc, question: "Bitcoin above $90,000 by December 31?" };
     const link = compareMarkets(pmBtc, ks90, now);
     expect(link!.matchStatus).toBe("conflict");
+  });
+
+  it("flags touch vs terminal at the same level as conflict — not the same contract", () => {
+    const ksTouch = { ...ksBtc, question: "Bitcoin hits $100,000 by December 31?" };
+    const link = compareMarkets(pmBtc, ksTouch, now);
+    expect(link!.matchStatus).toBe("conflict");
+    expect(link!.dimensions.find((d) => d.name === "threshold")?.comparable).toBe(false);
   });
 
   it("marks far-apart close times not_comparable", () => {

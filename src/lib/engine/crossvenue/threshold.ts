@@ -36,9 +36,17 @@ export function parseCryptoThreshold(
   if (threshold === null || threshold <= 0) return null;
 
   // direction words; ranges/ambiguous phrasing → not parseable
-  const above = /\b(above|over|exceed|greater than|higher than|reach|hit|at least)\b/i.test(title);
-  const below = /\b(below|under|less than|lower than|dip|fall under|drop below)\b/i.test(title);
+  const above = /\b(above|over|exceed(s|ed)?|greater than|higher than|reach(es|ed)?|hits?|at least)\b/i.test(title);
+  const below = /\b(below|under|less than|lower than|dips?|falls? under|drops? below)\b/i.test(title);
   if (above === below) return null; // both or neither → ambiguous
+
+  // touch vs terminal: "reach/hit/dip/drop/fall" settle on the period extreme
+  // (any trade through the level before close); "above/below on <date>" settle
+  // on the closing value. They are different contracts with different fair
+  // values, so the kind is part of the parsed structure.
+  const touch =
+    /\b(reach(es)?|hits?|touch(es)?|dips?|drops?|falls?)\b/i.test(title) ||
+    /\bat any (point|time)\b/i.test(title);
 
   // sanity: threshold must be plausibly a price for the asset (rejects
   // "$5 fee" mentions inside unrelated titles)
@@ -57,6 +65,7 @@ export function parseCryptoThreshold(
     coinbaseProduct: assetDef.product,
     threshold,
     direction: above ? "above" : "below",
+    kind: touch ? "touch" : "terminal",
     byDate: endDate,
   };
 }

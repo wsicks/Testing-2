@@ -103,14 +103,17 @@ export function compareMarkets(
     const same =
       thA.asset === thB.asset &&
       thA.direction === thB.direction &&
+      thA.kind === thB.kind &&
       Math.abs(thA.threshold - thB.threshold) / Math.max(thA.threshold, thB.threshold) < 0.001;
     thresholdState = same ? "match" : "conflict";
     dims.push(
       dim("threshold",
-        `${thA.asset} ${thA.direction} $${thA.threshold.toLocaleString()}`,
-        `${thB.asset} ${thB.direction} $${thB.threshold.toLocaleString()}`,
+        `${thA.asset} ${thA.direction} $${thA.threshold.toLocaleString()} (${thA.kind})`,
+        `${thB.asset} ${thB.direction} $${thB.threshold.toLocaleString()} (${thB.kind})`,
         same,
-        same ? "Parsed thresholds match exactly." : "Parsed thresholds DISAGREE — these are different contracts."),
+        same
+          ? "Parsed thresholds match exactly (same level, direction and touch/terminal kind)."
+          : "Parsed thresholds DISAGREE — these are different contracts. A touch (\"reach/hit\") and a terminal (\"above at close\") contract at the same level are NOT equivalent."),
     );
   }
 

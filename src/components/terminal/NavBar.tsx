@@ -15,6 +15,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/positions", label: "Positions" },
   { href: "/orders", label: "Orders" },
   { href: "/signals", label: "Signals" },
+  { href: "/ecl", label: "ECL" },
   { href: "/crossvenue", label: "Cross-Venue" },
   { href: "/sources", label: "Sources" },
   { href: "/backtesting", label: "Backtesting" },

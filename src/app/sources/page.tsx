@@ -12,13 +12,6 @@ import { Num } from "@/components/ui/num";
 import { Switch } from "@/components/ui/switch";
 import { EmptyNote, Spinner } from "@/components/ui/spinner";
 
-const VENUE_LABEL: Record<string, string> = {
-  polymarket: "Polymarket",
-  kalshi: "Kalshi",
-  coinbase: "Coinbase",
-  coingecko: "CoinGecko",
-};
-
 export default function SourcesPage() {
   const { data, isLoading } = useSources();
   const { data: settingsData } = useSettings();

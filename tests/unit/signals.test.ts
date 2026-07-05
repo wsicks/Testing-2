@@ -178,7 +178,7 @@ describe("closing-soon scanner", () => {
 });
 
 describe("registry", () => {
-  it("registers all nine strategies", () => {
+  it("registers all ten strategies", () => {
     expect(STRATEGIES.map((s) => s.id)).toEqual([
       "liquidity_spread",
       "price_movement",
@@ -189,6 +189,7 @@ describe("registry", () => {
       "microstructure",
       "reference_price",
       "venue_divergence",
+      "ecl",
     ]);
   });
 

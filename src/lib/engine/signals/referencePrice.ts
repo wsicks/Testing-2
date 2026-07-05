@@ -44,7 +44,19 @@ export const referencePriceSignal: SignalStrategy = {
     if (daysLeft !== undefined && volDaily !== undefined && volDaily > 0) {
       const z = requiredMove / (volDaily * Math.sqrt(daysLeft));
       const pAbove = 1 - normCdf(z);
-      modelProb = th.direction === "above" ? pAbove : 1 - pAbove;
+      const pTerminal = th.direction === "above" ? pAbove : 1 - pAbove;
+      if (th.kind === "touch") {
+        // touch contracts settle on the period extreme. If spot is beyond the
+        // level now the touch is proven; otherwise the reflection principle
+        // for a driftless walk gives P(touch) ≈ 2·P(terminal beyond) — still
+        // a LOWER bound on YES, since an earlier unobserved touch can't be
+        // ruled out from current spot.
+        const beyond =
+          th.direction === "above" ? spot >= th.threshold : spot <= th.threshold;
+        modelProb = beyond ? 0.99 : Math.min(0.99, 2 * pTerminal);
+      } else {
+        modelProb = pTerminal;
+      }
     }
     const implied = market.yesPrice;
     const gap =
@@ -75,7 +87,9 @@ export const referencePriceSignal: SignalStrategy = {
       check(
         "model_assumptions",
         false,
-        "Reachability uses a drift-free normal-walk approximation — a rough gauge, not a fair value. Human review required.",
+        th.kind === "touch"
+          ? "Touch contract: reachability uses the reflection-principle bound (≈2× terminal, a LOWER bound on YES — earlier unobserved touches can't be ruled out). A rough gauge, not a fair value. Human review required."
+          : "Reachability uses a drift-free normal-walk approximation — a rough gauge, not a fair value. Human review required.",
       ),
       check(
         "liquidity_floor",
@@ -108,6 +122,7 @@ export const referencePriceSignal: SignalStrategy = {
         asset: th.asset,
         threshold: th.threshold,
         direction: th.direction,
+        thresholdKind: th.kind,
         spot,
         spotSource: reference.spotSource,
         spotFreshnessMs: freshMs,

@@ -568,6 +568,14 @@ export interface CryptoThreshold {
   coinbaseProduct?: string; // BTC-USD
   threshold: number; // USD
   direction: "above" | "below";
+  /**
+   * terminal = settles on the value AT close ("above $X on <date>");
+   * touch = settles if the level trades AT ANY TIME before close
+   * ("reach/hit/dip to $X"). Same threshold, very different contracts:
+   * P(touch) can be ~2× P(terminal) and current spot alone can prove a touch
+   * happened but never that it didn't.
+   */
+  kind: "terminal" | "touch";
   byDate?: string;
 }
 

@@ -14,7 +14,6 @@ import { KALSHI_API_URL } from "@/lib/constants";
 import { getJson, qs, type HttpOpts } from "@/lib/polymarket/http";
 import type {
   BookLevel,
-  NormalizedCandle,
   NormalizedMarket,
   OrderBookData,
   RecentTrade,
