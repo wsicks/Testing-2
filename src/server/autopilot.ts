@@ -218,11 +218,17 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
     const store = await getStore();
     const settings = await store.getSettings();
     const config = settings.autopilot;
-    if (config.mode === "off") return { ran: false, entries: 0, exits: 0 };
     if (settings.killSwitch) {
       return { ran: false, entries: 0, exits: 0 };
     }
-    if (!s.session.startedAt) s.session.startedAt = Date.now();
+    // exits are risk-reducing and run even with autopilot OFF — managed lots
+    // (e.g. wallet-mimic paper tests) must never be orphaned. Entries stay
+    // strictly mode-gated below.
+    const entriesEnabled = config.mode !== "off";
+    if (!entriesEnabled && (await getManaged()).length === 0) {
+      return { ran: false, entries: 0, exits: 0 };
+    }
+    if (entriesEnabled && !s.session.startedAt) s.session.startedAt = Date.now();
     s.session.lastTickAt = Date.now();
 
     // live arming expiry
@@ -291,9 +297,9 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
       if (config.mode === "live") await disarmAutopilot("circuit breaker tripped", "system");
     }
 
-    // ── 3) entries ────────────────────────────────────────────────────────
+    // ── 3) entries — strictly mode-gated ───────────────────────────────────
     let entries = 0;
-    if (!s.session.breakerTripped) {
+    if (entriesEnabled && !s.session.breakerTripped) {
       const recentSignals = (await store.listSignals({ limit: 150 })).filter(
         (x) => Date.now() - x.createdAt < 12 * 60_000,
       );
@@ -569,6 +575,12 @@ async function executeExit(
   sellSize?: number,
 ): Promise<{ closedSize: number; remaining: number; pnlUsd: number }> {
   const toSell = Math.min(pos.size, Math.max(1, sellSize ?? pos.size));
+  // a LIVE lot can only be exited under a live-armed session — never through
+  // the paper book, never silently
+  if (pos.mode === "live" && mode !== "live") {
+    record({ kind: "skip", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, reason: `exit signaled (${reason}) on a LIVE lot while autopilot mode is ${mode} — manual action required` });
+    return { closedSize: 0, remaining: pos.size, pnlUsd: 0 };
+  }
   if (mode === "live" && pos.mode === "live") {
     // live exits go through the intent pipeline under the armed session
     if (!isArmed()) {
@@ -637,6 +649,29 @@ async function executeExit(
     severity: pnl < 0 ? "warn" : "info",
   });
   return { closedSize: closed, remaining: Math.max(0, pos.size - closed), pnlUsd: pnl };
+}
+
+/**
+ * Register an externally-created lot (wallet-mimic paper tests) for exit
+ * management. The exit sweep runs every scanner tick even with autopilot
+ * OFF, so registered lots always have a way out: plan levels when provided,
+ * plus the generic stop/trail/time/pre-close protections.
+ */
+export async function registerManagedLot(lot: ManagedPosition): Promise<void> {
+  const managed = await getManaged();
+  // one managed lot per token — a second mimic on the same token merges size
+  const existing = managed.find((m) => m.tokenId === lot.tokenId && m.mode === lot.mode);
+  if (existing) {
+    const total = existing.size + lot.size;
+    existing.entryPrice = Number(
+      ((existing.entryPrice * existing.size + lot.entryPrice * lot.size) / total).toFixed(4),
+    );
+    existing.size = total;
+    existing.peakPrice = Math.max(existing.peakPrice, lot.peakPrice);
+  } else {
+    managed.push(lot);
+  }
+  await setManaged(managed);
 }
 
 /** reset session counters + breaker (does not touch bandit memory) */

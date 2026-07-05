@@ -13,6 +13,7 @@
 
 import type { NormalizedMarket, SignalResult } from "@/lib/types";
 import { audit } from "../audit";
+import { registerManagedLot } from "../autopilot";
 import { placePaperOrder } from "../execution";
 import { getStore } from "../store";
 
@@ -83,10 +84,44 @@ export async function runMimicExecutor(
       });
       if (!res.rejected) {
         placed += 1;
+        // register the filled lot for exit management — the exit sweep runs
+        // every scanner tick even with autopilot OFF, so a mimic test is
+        // never an orphaned position. Exit plan mirrors the ECL convention
+        // over the wallet strategy's MEASURED expected edge.
+        const filled = res.order?.filledSize ?? 0;
+        if (filled > 0) {
+          const entry = res.order?.avgFillPrice ?? price;
+          const edge =
+            typeof sig.meta?.remainingEdge === "number"
+              ? (sig.meta.remainingEdge as number)
+              : typeof sig.meta?.netEdge === "number"
+                ? (sig.meta.netEdge as number)
+                : 0;
+          await registerManagedLot({
+            tokenId,
+            conditionId: sig.conditionId,
+            marketQuestion: market.question,
+            outcome: buyYes ? "Yes" : "No",
+            strategy: sig.strategy,
+            mode: "paper",
+            entryPrice: entry,
+            size: filled,
+            openedAt: Date.now(),
+            peakPrice: entry,
+            endDate: market.endDate,
+            exitPlan:
+              edge > 0.01
+                ? {
+                    partialAt: Number((entry + 0.6 * edge).toFixed(3)),
+                    fullAt: Number((entry + 0.85 * edge).toFixed(3)),
+                  }
+                : undefined,
+          });
+        }
         await audit(
           "execution",
           "wallet_mimic_paper",
-          `Paper ${mode === "paper_mimic" ? "MIMIC" : "FADE"} $${testUsd.toFixed(0)} on ${market.question.slice(0, 60)} (wallet ${String(sig.meta?.walletName ?? sig.meta?.walletId ?? "?")})`,
+          `Paper ${mode === "paper_mimic" ? "MIMIC" : "FADE"} $${testUsd.toFixed(0)} on ${market.question.slice(0, 60)} (wallet ${String(sig.meta?.walletName ?? sig.meta?.walletId ?? "?")}) — lot registered for exit management`,
           { data: { signalId: sig.id, orderId: res.order?.id } },
         );
       } else skipped += 1;
