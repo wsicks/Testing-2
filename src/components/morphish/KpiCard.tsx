@@ -38,8 +38,8 @@ export function KpiCard() {
         <Badge variant={data.riskState === "SAFE" ? "pos" : data.riskState === "WATCH" ? "warn" : "neg"}>
           {data.riskState}
         </Badge>
-        <Badge variant={(data.change24hUsd ?? 0) >= 0 ? "accent" : "neg"}>
-          24h {fmtSignedUsd(data.change24hUsd ?? 0)}
+        <Badge variant={(data.changeTodayUsd ?? 0) >= 0 ? "accent" : "neg"}>
+          today {fmtSignedUsd(data.changeTodayUsd ?? 0)}
         </Badge>
       </div>
       <div className="px-3 pt-2">
@@ -74,7 +74,11 @@ export function KpiCard() {
         <Field k="win rate" v={wr !== undefined ? `${(wr * 100).toFixed(1)}%` : "—"} />
         <Field k="avg r/r" v={p.avgRR !== undefined ? p.avgRR.toFixed(2) : "—"} />
         <Field k="breakeven wr" v={be !== undefined ? `${(be * 100).toFixed(1)}%` : "—"} tone={data.negativeExpectancy ? "warn" : undefined} />
-        <Field k="max drawdown" v={p.maxDrawdown !== undefined ? fmtUsd(p.maxDrawdown) : "—"} />
+        <Field
+          k="max drawdown"
+          v={p.maxDrawdown !== undefined ? `${(p.maxDrawdown * 100).toFixed(1)}%` : "—"}
+          tone={(p.maxDrawdown ?? 0) > 0.1 ? "warn" : undefined}
+        />
         <Field k="exposure" v={fmtUsd(p.exposure)} />
         <Field k="cash" v={fmtUsd(p.cash)} />
         <Field k="open orders" v={fmtUsd(data.openOrderExposure)} />

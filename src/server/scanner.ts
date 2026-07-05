@@ -37,6 +37,8 @@ interface ScannerGlobal {
   lastPrices: Map<string, number>;
   timer: ReturnType<typeof setInterval> | null;
   running: boolean;
+  /** completed scan passes since process start — a real counter, not a clock */
+  cycles: number;
 }
 
 const g = globalThis as unknown as { __pqScanner?: ScannerGlobal };
@@ -48,6 +50,7 @@ function state(): ScannerGlobal {
       lastPrices: new Map(),
       timer: null,
       running: false,
+      cycles: 0,
     };
   }
   return g.__pqScanner;
@@ -235,6 +238,7 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
     } catch (err) {
       console.error("[polyquant] autopilot tick failed:", err);
     }
+    s.cycles += 1;
     recordLatency("scan.tick_total", performance.now() - tickStart);
     publishFeed("scanner_tick", `Scanner pass: ${markets.length} markets, ${toPersist.length} new signal(s)`, {
       data: { markets: markets.length },
@@ -250,6 +254,11 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
   } finally {
     s.running = false;
   }
+}
+
+/** completed scan passes since process start */
+export function scanCycles(): number {
+  return state().cycles;
 }
 
 /**

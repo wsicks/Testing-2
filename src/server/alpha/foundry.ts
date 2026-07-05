@@ -8,8 +8,9 @@
 //
 // The registry of features is seeded with every Feature Forge idea from the
 // spec at its HONEST current status: strategies that already run in this app
-// are shadow_live/promoted; everything not yet built is an idea with its
-// thesis and kill criteria recorded — visible on the dashboard, not faked.
+// are shadow_live or paper_testing; everything not yet built is an idea with
+// its thesis and kill criteria recorded — visible on the dashboard, not
+// faked. No seed is ever "promoted": that requires a real human approval.
 
 import type {
   AlphaFeature,
@@ -61,14 +62,18 @@ interface FeatureSeed {
 }
 
 const FEATURE_SEEDS: FeatureSeed[] = [
-  // live strategies (status reflects real state in this app)
-  { id: "liquidity_spread", name: "Liquidity/Spread Screen", thesis: "Tradability screen: tight, deep books are a precondition for every other edge.", dataSources: ["polymarket_gamma", "polymarket_clob"], categoryScope: ["all"], status: "promoted", killCriteria: "spread/depth data becomes unreliable" },
-  { id: "price_movement", name: "Momentum / Mean-Reversion Screen", thesis: "Large day moves with volume support continue more often than they revert within hours.", dataSources: ["polymarket_gamma"], categoryScope: ["all"], status: "promoted", killCriteria: "rolling 1h post-signal drift ≤ 0 over 30 signals" },
+  // live strategies (status reflects real state in this app). NOTHING seeds
+  // as "promoted": promotion is prosecutor-pass + a real human approval, and
+  // synthesizing that at seed time would be exactly the fake authority this
+  // system exists to prevent. Until a human promotes them on /foundry,
+  // autopilot LIVE routing is closed for every strategy (paper unaffected).
+  { id: "liquidity_spread", name: "Liquidity/Spread Screen", thesis: "Tradability screen: tight, deep books are a precondition for every other edge.", dataSources: ["polymarket_gamma", "polymarket_clob"], categoryScope: ["all"], status: "shadow_live", killCriteria: "spread/depth data becomes unreliable" },
+  { id: "price_movement", name: "Momentum / Mean-Reversion Screen", thesis: "Large day moves with volume support continue more often than they revert within hours.", dataSources: ["polymarket_gamma"], categoryScope: ["all"], status: "shadow_live", killCriteria: "rolling 1h post-signal drift ≤ 0 over 30 signals" },
   { id: "complement_check", name: "Complement Probability Check", thesis: "YES+NO should sum to ~1 after costs; deviations flag data or pricing faults.", dataSources: ["polymarket_gamma"], categoryScope: ["all"], status: "shadow_live", killCriteria: "n/a — informational integrity check" },
   { id: "cross_market", name: "Same-Event Consistency", thesis: "Mutually-exclusive outcome sets that sum far from 1 imply mispricing somewhere in the set.", dataSources: ["polymarket_gamma"], categoryScope: ["all"], status: "shadow_live", killCriteria: "n/a — always requires human rule review" },
   { id: "closing_soon", name: "Closing-Window Screen", thesis: "Uncertainty near close with clear rules is where repricing debt concentrates.", dataSources: ["polymarket_gamma"], categoryScope: ["all"], status: "shadow_live", killCriteria: "n/a — informational screen" },
-  { id: "dislocation", name: "Kalman Fair-Value Dislocation", thesis: "Short-horizon price dislocations vs a Kalman fair value revert after noise.", dataSources: ["polymarket_clob"], categoryScope: ["all"], status: "promoted", killCriteria: "rolling 1h drift ≤ 0 over 30 signals, or decay verdict" },
-  { id: "microstructure", name: "Micro-price / Book Imbalance", thesis: "Stoikov micro-price and one-sided tape lead the mid over minutes.", dataSources: ["polymarket_clob"], categoryScope: ["all"], status: "promoted", killCriteria: "decay verdict or tradability < 50%" },
+  { id: "dislocation", name: "Kalman Fair-Value Dislocation", thesis: "Short-horizon price dislocations vs a Kalman fair value revert after noise.", dataSources: ["polymarket_clob"], categoryScope: ["all"], status: "shadow_live", killCriteria: "rolling 1h drift ≤ 0 over 30 signals, or decay verdict" },
+  { id: "microstructure", name: "Micro-price / Book Imbalance", thesis: "Stoikov micro-price and one-sided tape lead the mid over minutes.", dataSources: ["polymarket_clob"], categoryScope: ["all"], status: "shadow_live", killCriteria: "decay verdict or tradability < 50%" },
   { id: "reference_price", name: "Reference Price Gap (crypto)", thesis: "Walk-model probability from Coinbase spot+vol vs market implied — informational gauge.", dataSources: ["coinbase_public"], categoryScope: ["crypto"], status: "shadow_live", killCriteria: "n/a — model assumptions always require review" },
   { id: "venue_divergence", name: "Cross-Venue Dislocation", thesis: "Rule-comparable Polymarket/Kalshi pairs that disagree in price contain information one side hasn't priced.", dataSources: ["polymarket_gamma", "kalshi_public"], categoryScope: ["all"], status: "shadow_live", killCriteria: "rule-equivalence checks prove unreliable (conflict rate > 20%)" },
   { id: "ecl", name: "Entropy Collapse Lag", thesis: "The source of truth collapses uncertainty before the order book reprices; the lag is tradable after full friction.", whyMissed: "Requires fresh reference data, honest friction accounting and touch/terminal contract discrimination — most tooling has none of these.", dataSources: ["coinbase_public", "kalshi_public"], categoryScope: ["crypto"], status: "paper_testing", killCriteria: "1h drift after costs ≤ 0 over 50 qualified signals; or source freshness cannot be sustained" },
@@ -103,18 +108,29 @@ export async function ensureSeeded(): Promise<void> {
     await audit("system", "alpha_sources_seeded", `Free API registry seeded with ${seedSourceRecords(now).length} sources`, {});
   }
   const features = await listFeatures();
+  // heal stores seeded before the no-synthesized-promotions fix: an approval
+  // whose approver is the seed itself is not a human approval
+  const synthetic = features.filter((f) => f.humanApprovedBy?.startsWith("seed:"));
+  if (synthetic.length > 0) {
+    for (const f of synthetic) {
+      f.status = "shadow_live";
+      f.humanApprovedAt = undefined;
+      f.humanApprovedBy = undefined;
+      f.promotedAt = undefined;
+      f.updatedAt = now;
+    }
+    await saveFeatures(features);
+    await audit("system", "alpha_seed_promotions_revoked", `Revoked ${synthetic.length} seed-synthesized promotion(s) — promotion requires a real human approval on /foundry`, { severity: "warn" });
+  }
   if (features.length === 0) {
     const rows: AlphaFeature[] = FEATURE_SEEDS.map((s) => ({
       ...s,
       alphaScore: undefined,
-      humanApprovedAt: s.status === "promoted" ? now : undefined,
-      humanApprovedBy: s.status === "promoted" ? "seed: grandfathered pre-foundry strategies (paper evidence via bandit)" : undefined,
-      promotedAt: s.status === "promoted" ? now : undefined,
       createdAt: now,
       updatedAt: now,
     }));
     await saveFeatures(rows);
-    await audit("system", "alpha_features_seeded", `Alpha Foundry seeded with ${rows.length} features (${rows.filter((f) => f.status === "idea").length} ideas, ${rows.filter((f) => f.status === "paper_testing").length} in paper testing)`, {});
+    await audit("system", "alpha_features_seeded", `Alpha Foundry seeded with ${rows.length} features (${rows.filter((f) => f.status === "idea").length} ideas, ${rows.filter((f) => f.status === "paper_testing").length} in paper testing, 0 promoted — live routing stays closed until a human promotes a feature on /foundry)`, {});
   }
 }
 
@@ -186,12 +202,15 @@ export async function approvePromotion(
   featureId: string,
   approvedBy: string,
 ): Promise<{ ok: boolean; reason?: string }> {
-  const features = await listFeatures();
-  const f = features.find((x) => x.id === featureId);
-  if (!f) return { ok: false, reason: "unknown feature" };
   const verdict = await runProsecutor(featureId);
-  if (!verdict?.passed)
-    return { ok: false, reason: `prosecutor blocks promotion: ${verdict?.summary ?? "no verdict"}` };
+  if (!verdict)
+    return { ok: false, reason: "unknown feature" };
+  if (!verdict.passed)
+    return { ok: false, reason: `prosecutor blocks promotion: ${verdict.summary}` };
+  // re-read AFTER prosecution: runProsecutor persisted the verdict, and
+  // mutating a pre-prosecution object here would erase it on write-back
+  const f = (await listFeatures()).find((x) => x.id === featureId);
+  if (!f) return { ok: false, reason: "unknown feature" };
   f.status = "promoted";
   f.humanApprovedAt = Date.now();
   f.humanApprovedBy = approvedBy;

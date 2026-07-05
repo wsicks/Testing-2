@@ -23,11 +23,16 @@ export async function GET(req: NextRequest) {
   if (cached && Date.now() - cached.at < 5_000) {
     return NextResponse.json({ ...cached.payload, cached: true });
   }
-  const orders = await store.listOrders(mode === "live" ? undefined : mode, ["open", "partially_filled"]);
-  const openOrderExposure = orders.reduce(
-    (a, o) => a + (o.size - o.filledSize) * o.price,
-    0,
-  );
+  // live mode counts LIVE intents; paper/demo count their own paper book.
+  // Passing undefined would sum paper+demo rows onto a live board.
+  let openOrderExposure = 0;
+  if (mode === "live") {
+    const intents = await store.listIntents(["submitted", "open", "partially_filled"]);
+    openOrderExposure = intents.reduce((a, o) => a + (o.size - o.filledSize) * o.price, 0);
+  } else {
+    const orders = await store.listOrders(mode, ["open", "partially_filled"]);
+    openOrderExposure = orders.reduce((a, o) => a + (o.size - o.filledSize) * o.price, 0);
+  }
   const payload = await morphishSummary(mode, {
     killSwitch: settings.killSwitch,
     openOrderExposure,

@@ -30,7 +30,7 @@ const KEYS = {
 const CAPS = {
   wallets: 300,
   walletTrades: 300,
-  outcomes: 1_000,
+  outcomes: 2_000,
   ideas: 120,
   disclosures: 240,
 } as const;

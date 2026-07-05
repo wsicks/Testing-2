@@ -279,6 +279,13 @@ export interface AlphaOutcome {
   tradable: boolean;
   wasProposed: boolean;
   walletId?: string;
+  /**
+   * sign relating SIGNAL-direction drift to the WALLET's own drift: +1 when
+   * the signal follows the wallet (wallet_shadow), −1 when it fades it
+   * (wallet_fade). Without this, successful fades would credit the faded
+   * wallet with positive forward evidence.
+   */
+  walletSign?: 1 | -1;
   createdAt: number;
   buckets: Partial<Record<DecayBucketKey, DecayBucket>>;
 }

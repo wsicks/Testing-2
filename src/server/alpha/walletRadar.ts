@@ -80,8 +80,18 @@ function isClosed(p: DataApiPosition): boolean {
   return p.redeemable || p.curPrice === 0 || p.curPrice === 1 || p.currentValue === 0;
 }
 
-function toClosedLite(p: DataApiPosition, now: number): ClosedPositionLite {
+/**
+ * openTs: earliest observed BUY per conditionId from the wallet's public
+ * tape. Position HOLDING duration = close time − first entry; without an
+ * observed entry the duration is honestly unknown (the positions endpoint
+ * has no open timestamp), never guessed.
+ */
+function toClosedLite(
+  p: DataApiPosition,
+  openTsByCondition: Map<string, number>,
+): ClosedPositionLite {
   const closedAt = p.endDate ? new Date(p.endDate).getTime() : undefined;
+  const openTs = openTsByCondition.get(p.conditionId);
   return {
     pnl: p.cashPnl,
     initialValue: p.initialValue,
@@ -90,7 +100,9 @@ function toClosedLite(p: DataApiPosition, now: number): ClosedPositionLite {
     closedAt,
     dimensions: [
       `cat:${categorizeMarket({ question: p.title })}`,
-      durationBucket(closedAt, Math.min(now, closedAt ?? now)),
+      openTs !== undefined && closedAt !== undefined && closedAt > openTs
+        ? durationBucket(closedAt, openTs)
+        : "dur:unknown",
       liquidityBucket(undefined),
     ],
   };
@@ -114,7 +126,13 @@ export async function scoreWallet(
   const trades = (await fetchWalletTrades(walletId, 200)).map(toTradeLite);
   await saveWalletTrades(walletId, [...trades].reverse()); // store oldest→newest
 
-  const closed = positions.filter(isClosed).map((p) => toClosedLite(p, now));
+  const openTsByCondition = new Map<string, number>();
+  for (const t of trades) {
+    if (t.side !== "BUY") continue;
+    const cur = openTsByCondition.get(t.conditionId);
+    if (cur === undefined || t.ts < cur) openTsByCondition.set(t.conditionId, t.ts);
+  }
+  const closed = positions.filter(isClosed).map((p) => toClosedLite(p, openTsByCondition));
   const open = positions.filter((p) => !isClosed(p));
   const dims = new Set<string>();
   for (const c of closed) for (const d of c.dimensions) dims.add(d);
@@ -143,10 +161,13 @@ export async function scoreWallet(
     positions.length > 0
       ? positions.filter((p) => p.avgPrice <= 0.1 || p.avgPrice >= 0.9).length / positions.length
       : 0;
+  // short-duration share over positions with KNOWN duration only — unknown
+  // durations must not manufacture a "closing-market sniper" label
+  const knownDur = closed.filter((c) => !c.dimensions.includes("dur:unknown"));
   const shortDurShare =
-    closed.length > 0
-      ? closed.filter((c) => c.dimensions.some((d) => d === "dur:closing" || d === "dur:short")).length /
-        closed.length
+    knownDur.length >= 10
+      ? knownDur.filter((c) => c.dimensions.some((d) => d === "dur:closing" || d === "dur:short")).length /
+        knownDur.length
       : 0;
   const unrealizedShare = (() => {
     const openVal = open.reduce((a, p) => a + Math.abs(p.cashPnl), 0);
@@ -314,6 +335,7 @@ export async function refreshWalletIntel(maxWallets = 25): Promise<number> {
         .slice(0, maxWallets);
 
       const intel = new Map<string, MarketWalletIntel>();
+      const refreshedIds: string[] = [];
       for (const w of wallets) {
         try {
           const positions = await fetchWalletPositions(w.walletId, 100);
@@ -346,7 +368,7 @@ export async function refreshWalletIntel(maxWallets = 25): Promise<number> {
             cur.entries.push(entry);
             intel.set(p.conditionId, cur);
           }
-          w.lastIntelAt = now;
+          refreshedIds.push(w.walletId);
           await politeDelay(120);
         } catch {
           /* one wallet failing must not kill the refresh */
@@ -359,7 +381,16 @@ export async function refreshWalletIntel(maxWallets = 25): Promise<number> {
       }
       s.intel = intel;
       s.intelBuiltAt = now;
-      await saveWallets(await listWallets()); // persist lastIntelAt updates
+      // persist lastIntelAt on a FRESH read-modify-write: mutating the rows
+      // fetched before the (minutes-long) network loop would lose any
+      // concurrent update (e.g. forward-evidence writes), and on the Prisma
+      // store the early objects are detached parses whose mutations vanish
+      const latest = await listWallets();
+      for (const id of refreshedIds) {
+        const row = latest.find((x) => x.walletId === id);
+        if (row) row.lastIntelAt = now;
+      }
+      await saveWallets(latest);
       return intel.size;
     });
   } finally {
@@ -405,6 +436,16 @@ export async function rescoreTrackedWallets(max = 25): Promise<number> {
         pseudonym: w.pseudonym,
         existing: w,
       });
+      // merge live-updated fields from a FRESH read: the loop spans minutes
+      // of network I/O, and forward evidence recorded meanwhile must not be
+      // reverted by this stale snapshot
+      const fresh = (await listWallets()).find((x) => x.walletId === w.walletId);
+      if (fresh?.forward && (!record.forward || fresh.forward.updatedAt > (record.forward.updatedAt ?? 0))) {
+        record.forward = fresh.forward;
+      }
+      if (fresh?.lastIntelAt && fresh.lastIntelAt > (record.lastIntelAt ?? 0)) {
+        record.lastIntelAt = fresh.lastIntelAt;
+      }
       await upsertWallet(record);
       n += 1;
       await politeDelay(250);

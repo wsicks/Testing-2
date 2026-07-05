@@ -34,7 +34,8 @@ export function CommandBar({ venueScope }: { venueScope: string }) {
   );
   const p50 = hot?.length ? Math.max(...hot.map((h) => h.p50)) : undefined;
   const p95 = hot?.length ? Math.max(...hot.map((h) => h.p95)) : undefined;
-  const wsUp = health ? health.gamma.ok && health.clob.ok : true;
+  // undefined = health not yet known; never fabricate an OK
+  const wsUp: boolean | undefined = health ? health.gamma.ok && health.clob.ok : undefined;
   const freshS = sum ? Math.round(sum.scan.ageMs / 1000) : undefined;
 
   return (
@@ -58,7 +59,10 @@ export function CommandBar({ venueScope }: { venueScope: string }) {
           {mode}{sum?.isSample ? " · SAMPLE" : ""}
         </Badge>
         <span className="text-3xs uppercase text-ink-faint">
-          health <span className={cn("font-bold", wsUp ? "text-pos" : "text-neg")}>{wsUp ? "OK" : "DEGRADED"}</span>
+          health{" "}
+          <span className={cn("font-bold", wsUp === undefined ? "text-ink-faint" : wsUp ? "text-pos" : "text-neg")}>
+            {wsUp === undefined ? "—" : wsUp ? "OK" : "DEGRADED"}
+          </span>
         </span>
         <span className="text-3xs uppercase text-ink-faint">
           cycle <Num className="font-bold text-ink">#{sum?.scan.cycle ?? "—"}</Num>
@@ -75,7 +79,10 @@ export function CommandBar({ venueScope }: { venueScope: string }) {
       </div>
       <div className="ml-auto flex items-center gap-3">
         <span className="text-3xs uppercase text-ink-faint">
-          ws <span className={cn("font-bold", wsUp ? "text-pos" : "text-neg")}>{wsUp ? "live" : "down"}</span>
+          ws{" "}
+          <span className={cn("font-bold", wsUp === undefined ? "text-ink-faint" : wsUp ? "text-pos" : "text-neg")}>
+            {wsUp === undefined ? "—" : wsUp ? "live" : "down"}
+          </span>
         </span>
         <span className="text-3xs uppercase text-ink-faint">
           hot p50/p95{" "}

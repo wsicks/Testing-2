@@ -26,6 +26,7 @@ import { computePortfolio } from "./portfolio";
 import { measure, measureSync, perfSnapshot } from "./perf";
 import { recentSignals } from "./hotpath/signalCache";
 import { regInfo } from "./hotpath/registry";
+import { scanCycles } from "./scanner";
 import { getWalletIntel, walletIntelInfo } from "./alpha/walletRadar";
 import { listFeatures } from "./alpha/repo";
 import { listWallets } from "./alpha/repo";
@@ -35,13 +36,39 @@ import { listWallets } from "./alpha/repo";
 interface MorphishGlobal {
   featureStatus: Map<string, AlphaFeatureStatus>;
   featureStatusAt: number;
+  walletNames: Map<string, string>;
+  walletNamesAt: number;
 }
 
 const g = globalThis as unknown as { __eqMorphish?: MorphishGlobal };
 
 function state(): MorphishGlobal {
-  if (!g.__eqMorphish) g.__eqMorphish = { featureStatus: new Map(), featureStatusAt: 0 };
+  if (!g.__eqMorphish) {
+    g.__eqMorphish = {
+      featureStatus: new Map(),
+      featureStatusAt: 0,
+      walletNames: new Map(),
+      walletNamesAt: 0,
+    };
+  }
   return g.__eqMorphish;
+}
+
+/** wallet display names, memoized 60s — the graph must not hit the store per request */
+async function walletNamesMemo(): Promise<Map<string, string>> {
+  const s = state();
+  if (Date.now() - s.walletNamesAt > 60_000) {
+    try {
+      const wallets = await listWallets();
+      s.walletNames = new Map(
+        wallets.map((w) => [w.walletId, w.pseudonym ?? w.walletId.slice(0, 8)]),
+      );
+      s.walletNamesAt = Date.now();
+    } catch {
+      /* keep last-good names */
+    }
+  }
+  return s.walletNames;
 }
 
 async function featureStatuses(): Promise<Map<string, AlphaFeatureStatus>> {
@@ -71,7 +98,8 @@ export interface MorphishSummary {
   breakevenWinRate?: number;
   negativeExpectancy: boolean;
   riskState: "SAFE" | "WATCH" | "LOCKED";
-  change24hUsd?: number;
+  /** PnL since local midnight (the portfolio engine's "daily") — labeled "today" in the UI, NOT a rolling 24h window */
+  changeTodayUsd?: number;
   openOrderExposure: number;
   scan: { cycle: number; markets: number; updatedAt: number; ageMs: number };
   signals: { active: number; proposed: number; experimental: number };
@@ -102,9 +130,9 @@ export async function morphishSummary(
     breakevenWinRate: breakeven,
     negativeExpectancy,
     riskState: opts.killSwitch ? "LOCKED" : negativeExpectancy || portfolio.dailyPnl < 0 ? "WATCH" : "SAFE",
-    change24hUsd: portfolio.dailyPnl,
+    changeTodayUsd: portfolio.dailyPnl,
     openOrderExposure: opts.openOrderExposure,
-    scan: { cycle: reg.size > 0 ? Math.max(1, Math.floor(reg.updatedAt / 30_000) % 100_000) : 0, markets: reg.size, updatedAt: reg.updatedAt, ageMs: reg.ageMs },
+    scan: { cycle: scanCycles(), markets: reg.size, updatedAt: reg.updatedAt, ageMs: reg.ageMs },
     signals: {
       active: sigs.length,
       proposed: sigs.filter((x) => x.status === "proposed").length,
@@ -464,7 +492,9 @@ export async function morphishRidge(selectedId?: string): Promise<RidgePayload> 
         spotFreshnessMs: now - ref.ts,
         marketProb: m.midpoint ?? m.yesPrice,
         shadowProb: shadow,
-        tailMass: th.direction === "above" ? shadow : 1 - shadow,
+        // cryptoShadowProb is ALREADY direction-adjusted — the mass in the
+        // market-relevant tail is the shadow itself for both directions
+        tailMass: shadow,
         requiredMovePct: (th.threshold - ref.spot) / ref.spot,
         points: xs.map((x, i) => ({ x: Number(x.toFixed(5)), y: Number(ys[i].toFixed(4)) })),
         strikeX: Number(strikeX.toFixed(5)),
@@ -526,10 +556,10 @@ export interface GraphPayload {
 }
 
 export async function morphishGraph(): Promise<GraphPayload> {
-  const [{ markets }, links, wallets] = await Promise.all([
+  const [{ markets }, links, walletName] = await Promise.all([
     getMarkets(),
     getCrossVenueLinks().catch(() => [] as CrossVenueLink[]),
-    listWallets().catch(() => []),
+    walletNamesMemo(),
   ]);
   const now = Date.now();
   return measureSync("hot.morphish_graph", () => {
@@ -606,7 +636,6 @@ export async function morphishGraph(): Promise<GraphPayload> {
     }
 
     // tracked wallets with live stances in displayed markets
-    const walletName = new Map(wallets.map((w) => [w.walletId, w.pseudonym ?? w.walletId.slice(0, 8)]));
     let consensusPairs = 0;
     for (const [conditionId] of byId) {
       const mid = `mkt:${conditionId}`;

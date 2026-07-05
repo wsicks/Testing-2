@@ -80,7 +80,9 @@ export const walletShadowSignal: SignalStrategy = {
     const spread = Math.max(0.001, yesAsk - yesBid);
     const buyYes = best.side === "YES";
     const entryPrice = buyYes ? yesAsk : 1 - yesBid; // our executable price on the wallet's side
-    const walletRefPrice = buyYes ? best.avgEntryPrice : 1 - best.avgEntryPrice;
+    // avgEntryPrice from the data-api is ALREADY denominated in the held
+    // token (a NO stance's avgPrice is the NO price paid) — no conversion
+    const walletRefPrice = best.avgEntryPrice;
     const entryDepth = buyYes ? book?.askDepthUsd : book?.bidDepthUsd;
 
     const clarity = resolutionClarity(market.description, market.resolutionSource);
