@@ -601,3 +601,122 @@ export function useDisclosures() {
     refetchInterval: 120_000,
   });
 }
+
+// ── Morphish board ─────────────────────────────────────────────────────────
+
+export function useMorphishSummary(mode?: TerminalMode) {
+  return useQuery<import("@/server/morphish").MorphishSummary & { cached?: boolean }>({
+    queryKey: ["morphish", "summary", mode],
+    queryFn: () => json(`/api/morphish/summary${mode ? `?mode=${mode}` : ""}`),
+    refetchInterval: 5_000,
+  });
+}
+
+export function useMorphishTopGem() {
+  return useQuery<
+    import("@/server/morphish").TopGemPayload & { spark: { t: number; p: number }[] }
+  >({
+    queryKey: ["morphish", "topgem"],
+    queryFn: () => json("/api/morphish/top-gem"),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useMorphishLattice() {
+  return useQuery<import("@/server/morphish").LatticePayload>({
+    queryKey: ["morphish", "lattice"],
+    queryFn: () => json("/api/morphish/probability-lattice"),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useMorphishRidge(selected?: string) {
+  return useQuery<import("@/server/morphish").RidgePayload>({
+    queryKey: ["morphish", "ridge", selected],
+    queryFn: () =>
+      json(`/api/morphish/tail-ridge${selected ? `?selected=${encodeURIComponent(selected)}` : ""}`),
+    refetchInterval: 20_000,
+  });
+}
+
+export function useMorphishGraph() {
+  return useQuery<import("@/server/morphish").GraphPayload>({
+    queryKey: ["morphish", "graph"],
+    queryFn: () => json("/api/morphish/relationship-graph"),
+    refetchInterval: 20_000,
+  });
+}
+
+export interface SelectedMarketPayload {
+  market: NormalizedMarket;
+  book?: OrderBookData;
+  signals: SignalResult[];
+  crossLinks: import("@/lib/types").CrossVenueLink[];
+  walletIntel?: import("@/lib/alpha/types").MarketWalletIntel;
+  ruleClarity: number;
+  clarityReason: string;
+  reasonsFor: string[];
+  reasonsAgainst: string[];
+}
+
+export function useMorphishSelected(id?: string) {
+  return useQuery<SelectedMarketPayload>({
+    queryKey: ["morphish", "selected", id],
+    queryFn: () => json(`/api/morphish/selected-market/${id}`),
+    enabled: !!id,
+    refetchInterval: 10_000,
+  });
+}
+
+export function useMorphishWatchlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { conditionId: string; add: boolean }) =>
+      json<{ watchlist: string[] }>("/api/morphish/watchlist", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+export interface TradePreviewBody {
+  conditionId?: string;
+  tokenId: string;
+  outcome?: string;
+  side: "BUY" | "SELL";
+  orderType?: "limit" | "market";
+  price: number;
+  size: number;
+  signalId?: string;
+  signalScore?: number;
+  winProbability?: number;
+}
+
+export function useMorphishPaperPreview() {
+  return useMutation({
+    mutationFn: (body: TradePreviewBody) =>
+      json<{ assessment: RiskAssessment; marketTitle?: string }>(
+        "/api/morphish/paper-trade-preview",
+        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+      ),
+  });
+}
+
+export function useMorphishLivePreview() {
+  return useMutation({
+    mutationFn: (body: TradePreviewBody) =>
+      json<{
+        assessment: RiskAssessment;
+        marketTitle?: string;
+        liveGateOpen: boolean;
+        liveGateReasons: string[];
+        note: string;
+      }>("/api/morphish/live-trade-preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+  });
+}

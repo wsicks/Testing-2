@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 
 const LINKS: { href: string; label: string }[] = [
   { href: "/", label: "Dashboard" },
+  { href: "/dashboard/morphish", label: "Morphish Board" },
   { href: "/scanner", label: "Scanner" },
   { href: "/autopilot", label: "Autopilot" },
   { href: "/positions", label: "Positions" },

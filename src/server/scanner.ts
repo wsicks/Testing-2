@@ -27,6 +27,7 @@ import { maybeSnapshotPortfolio } from "./portfolio";
 import { settleOpenOrders } from "./execution";
 import { getStore } from "./store";
 import { ensureFoundryTicker } from "./alpha/foundry";
+import { pushSignals } from "./hotpath/signalCache";
 import { runMimicExecutor } from "./alpha/mimic";
 import { trackSignalOutcomes } from "./alpha/outcomes";
 import { getWalletIntel } from "./alpha/walletRadar";
@@ -195,6 +196,7 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
     const toPersist = [...perStrategy.values()].flat().slice(0, 56);
     if (toPersist.length) {
       await store.addSignals(toPersist);
+      pushSignals(toPersist); // hot in-memory ring for dashboard reads
       for (const sig of toPersist.slice(0, 8)) {
         publishFeed(
           sig.status === "rejected" ? "signal_rejected" : "signal_created",
