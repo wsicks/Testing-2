@@ -569,9 +569,14 @@ export async function morphishGraph(): Promise<GraphPayload> {
     const byId = new Map(markets.map((m) => [m.conditionId, m]));
     const sigs = recentSignals(now);
     const nodes = new Map<string, GraphNode>();
-    const edges: GraphEdge[] = [];
+    // edge ids are React keys downstream — a market carrying several signals
+    // must not emit duplicate cat:/evt: edges, so edges dedupe by id
+    const edgeById = new Map<string, GraphEdge>();
     const addNode = (n: GraphNode) => {
       if (!nodes.has(n.id)) nodes.set(n.id, n);
+    };
+    const addEdge = (e: GraphEdge) => {
+      if (!edgeById.has(e.id)) edgeById.set(e.id, e);
     };
 
     // seed: markets carrying the strongest recent signals
@@ -588,7 +593,7 @@ export async function morphishGraph(): Promise<GraphPayload> {
         meta: { conditionId: m.conditionId, prob: m.midpoint ?? m.yesPrice },
       });
       addNode({ id: `sig:${s.strategy}`, type: "signal", label: s.strategyLabel, size: 8 });
-      edges.push({
+      addEdge({
         id: `e:sig:${s.id}`, source: `sig:${s.strategy}`, target: mid, type: "signal_link",
         strength: s.score / 100, tone: s.status === "proposed" ? "blue" : "gray",
         dotted: s.status !== "proposed",
@@ -596,13 +601,13 @@ export async function morphishGraph(): Promise<GraphPayload> {
       });
       const cat = categorizeMarket({ question: m.question, category: m.category, tags: m.tags });
       addNode({ id: `cat:${cat}`, type: "category", label: cat, size: 12 });
-      edges.push({
+      addEdge({
         id: `e:cat:${m.conditionId}`, source: `cat:${cat}`, target: mid, type: "category_link",
         strength: 0.3, tone: "gray", dotted: true, note: `category cluster: ${cat}`,
       });
       if (m.eventSlug) {
         addNode({ id: `evt:${m.eventSlug}`, type: "event", label: m.eventSlug.slice(0, 32), size: 9 });
-        edges.push({
+        addEdge({
           id: `e:evt:${m.conditionId}`, source: `evt:${m.eventSlug}`, target: mid,
           type: "same_event", strength: 0.6, tone: "gray", dotted: false,
           note: "same underlying event",
@@ -629,7 +634,7 @@ export async function morphishGraph(): Promise<GraphPayload> {
       const conflict = l.matchStatus === "conflict";
       if (conflict) conflictCount += 1;
       matchScores.push(l.matchScore);
-      edges.push({
+      addEdge({
         id: `e:xv:${l.id}`, source: a, target: b, type: conflict ? "rule_conflict" : "cross_venue",
         strength: l.matchScore,
         tone: conflict ? "red" : l.matchStatus === "strong_candidate" ? "blue" : "gray",
@@ -653,7 +658,7 @@ export async function morphishGraph(): Promise<GraphPayload> {
           id: wid, type: "wallet", label: e.displayName ?? walletName.get(e.walletId) ?? e.walletId.slice(0, 8),
           size: 8, meta: { walletId: e.walletId, label: e.label },
         });
-        edges.push({
+        addEdge({
           id: `e:w:${e.walletId}:${conditionId}`, source: wid, target: mid, type: "wallet_position",
           strength: Math.min(1, e.sizeUsd / 1_000),
           tone: e.label === "fade_candidate" ? "red" : e.exiting ? "gray" : "blue",
@@ -669,7 +674,7 @@ export async function morphishGraph(): Promise<GraphPayload> {
     }
     for (const n of [...nodes.values()]) {
       if (n.type === "market" && n.venueId) {
-        edges.push({
+        addEdge({
           id: `e:v:${n.id}`, source: `ven:${n.venueId}`, target: n.id, type: "reference_link",
           strength: 0.2, tone: "gray", dotted: true, note: `listed on ${n.venueId}`,
         });
@@ -680,10 +685,10 @@ export async function morphishGraph(): Promise<GraphPayload> {
     for (const s of matchScores) hist[Math.min(9, Math.floor(s * 10))] += 1;
     return {
       nodes: [...nodes.values()].slice(0, 140),
-      edges: edges.slice(0, 280),
+      edges: [...edgeById.values()].slice(0, 280),
       stats: {
         nodes: nodes.size,
-        edges: edges.length,
+        edges: edgeById.size,
         conflicts: conflictCount,
         walletConsensus: consensusPairs,
         crossVenuePairs: matchScores.length,
