@@ -16,6 +16,8 @@ import { eclSignal } from "./ecl";
 import { walletShadowSignal } from "./walletShadow";
 import { walletFadeSignal } from "./walletFade";
 import { deadlineCurvatureSignal } from "./deadlineCurvature";
+import { mmAbsenceSignal } from "./mmAbsence";
+import { liquidityVacuumSignal } from "./liquidityVacuum";
 
 export const STRATEGIES: SignalStrategy[] = [
   liquiditySpreadSignal,
@@ -31,6 +33,8 @@ export const STRATEGIES: SignalStrategy[] = [
   walletShadowSignal,
   walletFadeSignal,
   deadlineCurvatureSignal,
+  mmAbsenceSignal,
+  liquidityVacuumSignal,
 ];
 
 export function getStrategy(id: string): SignalStrategy | undefined {

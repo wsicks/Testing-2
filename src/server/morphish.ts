@@ -100,6 +100,8 @@ export interface MorphishSummary {
   riskState: "SAFE" | "WATCH" | "LOCKED";
   /** PnL since local midnight (the portfolio engine's "daily") — labeled "today" in the UI, NOT a rolling 24h window */
   changeTodayUsd?: number;
+  /** value change vs the oldest snapshot within the last 7 days; absent until ≥1d of snapshot history exists */
+  change7dUsd?: number;
   openOrderExposure: number;
   scan: { cycle: number; markets: number; updatedAt: number; ageMs: number };
   signals: { active: number; proposed: number; experimental: number };
@@ -110,7 +112,7 @@ export interface MorphishSummary {
 
 export async function morphishSummary(
   mode: TerminalMode,
-  opts: { killSwitch: boolean; openOrderExposure: number },
+  opts: { killSwitch: boolean; openOrderExposure: number; change7dUsd?: number },
 ): Promise<MorphishSummary> {
   const portfolio = await computePortfolio(mode);
   const sigs = recentSignals();
@@ -131,6 +133,7 @@ export async function morphishSummary(
     negativeExpectancy,
     riskState: opts.killSwitch ? "LOCKED" : negativeExpectancy || portfolio.dailyPnl < 0 ? "WATCH" : "SAFE",
     changeTodayUsd: portfolio.dailyPnl,
+    change7dUsd: opts.change7dUsd,
     openOrderExposure: opts.openOrderExposure,
     scan: { cycle: scanCycles(), markets: reg.size, updatedAt: reg.updatedAt, ageMs: reg.ageMs },
     signals: {

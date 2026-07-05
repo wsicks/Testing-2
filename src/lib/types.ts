@@ -216,6 +216,8 @@ export interface SignalContext {
   crossLinks?: CrossVenueLink[];
   /** tracked-wallet stances in this market (Wallet Radar, cold-path built) */
   walletIntel?: import("./alpha/types").MarketWalletIntel;
+  /** rolling microstructure baseline for this market (spread/liquidity EMAs) */
+  baseline?: { spreadEma: number; liquidityEma: number; samples: number };
   /** alpha/wallet-follow thresholds (subset of AppSettings) */
   alpha?: import("./alpha/types").AlphaSettings;
   settings: RiskSettings;

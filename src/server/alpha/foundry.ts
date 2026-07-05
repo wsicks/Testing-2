@@ -85,8 +85,8 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { id: "attention_imbalance", name: "Attention Imbalance Index", thesis: "News volume spiking without price movement (or vice versa) flags hidden lag or informed flow.", dataSources: ["gdelt"], categoryScope: ["politics", "geopolitics"], status: "idea", killCriteria: "GDELT fails DATA VALIDATION (freshness/terms), or index has no forward correlation over 100 observations" },
   { id: "policy_momentum", name: "Policy Momentum Index", thesis: "Bill/rulemaking cadence from official sources leads policy-linked market repricing.", dataSources: ["congress_gov", "federal_register", "regulations_gov", "usaspending"], categoryScope: ["politics"], status: "idea", killCriteria: "requires CONGRESS_GOV_API_KEY; kill if mapped markets show no drift over 50 events" },
   { id: "calendar_shock", name: "Official Calendar Shock", thesis: "Scheduled releases (CPI/jobs/Fed/EIA/NWS) collapse uncertainty at known times; trade only AFTER official publication.", dataSources: ["bls", "fred", "eia", "nws", "fed_calendar"], categoryScope: ["macro", "fed_rates", "weather"], status: "idea", killCriteria: "release-to-reprice window proves < internal latency (untradable)" },
-  { id: "liquidity_vacuum", name: "Liquidity Vacuum Detector", thesis: "Thin books where small flow moves price — an edge amplifier and a chase risk; only usable when edge survives modeled slippage.", dataSources: ["polymarket_clob"], categoryScope: ["all"], status: "idea", killCriteria: "vacuum signals never survive slippage stress" },
-  { id: "mm_absence", name: "Market Maker Absence", thesis: "Sudden spread widening in normally-liquid markets plus smart-wallet entries indicates temporary mispricing.", dataSources: ["polymarket_clob", "polymarket_data"], categoryScope: ["all"], status: "idea", killCriteria: "needs spread-baseline storage; kill if refill speed beats detection" },
+  { id: "liquidity_vacuum", name: "Liquidity Vacuum Detector", thesis: "Active-looking books where <$200 of flow moves the touch 1c — displayed prices rest on air. Protective screen; depth gates in directional strategies enforce it.", dataSources: ["polymarket_clob"], categoryScope: ["all"], status: "shadow_live", killCriteria: "n/a — protective screen" },
+  { id: "mm_absence", name: "Market Maker Absence", thesis: "Sudden spread blowout vs the market's own rolling baseline (≥2.5× and +2c in a normally-tight book) indicates a withdrawn liquidity provider; directional only with a proven positioned wallet.", dataSources: ["polymarket_clob", "polymarket_data"], categoryScope: ["all"], status: "paper_testing", killCriteria: "1h drift after the blown-out spread's own friction ≤ 0 over 30 directional signals; or refill speed beats detection" },
   { id: "rule_ambiguity_short_circuit", name: "Rule Ambiguity Short-Circuit", thesis: "Markets priced certain while wording is ambiguous are uninvestable regardless of model edge — a protection implemented as the rule-clarity gate in every live strategy.", dataSources: ["polymarket_gamma", "kalshi_public"], categoryScope: ["all"], status: "shadow_live", killCriteria: "n/a — protective screen" },
   { id: "capital_lockup", name: "Capital Lockup Penalty", thesis: "Edge smaller than the cost of locking capital to settlement is not edge — implemented as a sizing/gating penalty in wallet strategies.", dataSources: [], categoryScope: ["all"], status: "shadow_live", killCriteria: "n/a — accounting rule" },
   { id: "flow_toxicity", name: "Flow Toxicity Index", thesis: "Classify tape flow (informed / copied / noise / MM) to weight microstructure signals.", dataSources: ["polymarket_data", "polymarket_clob"], categoryScope: ["all"], status: "idea", killCriteria: "classifier fails to beat one-sidedness baseline out of sample" },
@@ -108,6 +108,32 @@ export async function ensureSeeded(): Promise<void> {
     await audit("system", "alpha_sources_seeded", `Free API registry seeded with ${seedSourceRecords(now).length} sources`, {});
   }
   const features = await listFeatures();
+  // reconcile stored lifecycle positions with newly-shipped code: when a
+  // feature's seed status advanced because its strategy now EXISTS (idea →
+  // paper_testing/shadow_live), upgrade stored rows that are still earlier
+  // in the lifecycle. Upgrade-only: runtime progress and human decisions
+  // (promoted/degraded/retired/rejected) are never touched.
+  const RANK: Partial<Record<AlphaFeatureStatus, number>> = {
+    idea: 0, data_connected: 1, backtesting: 2, paper_testing: 3, shadow_live: 4,
+  };
+  let reconciled = 0;
+  for (const f of features) {
+    const seed = FEATURE_SEEDS.find((s) => s.id === f.id);
+    if (!seed) continue;
+    const cur = RANK[f.status];
+    const target = RANK[seed.status];
+    if (cur !== undefined && target !== undefined && target > cur) {
+      f.status = seed.status;
+      f.thesis = seed.thesis;
+      f.killCriteria = seed.killCriteria;
+      f.updatedAt = now;
+      reconciled += 1;
+    }
+  }
+  if (reconciled > 0) {
+    await saveFeatures(features);
+    await audit("system", "alpha_features_reconciled", `${reconciled} feature(s) advanced to match newly-shipped strategy code (upgrade-only lifecycle reconcile)`, {});
+  }
   // heal stores seeded before the no-synthesized-promotions fix: an approval
   // whose approver is the seed itself is not a human approval
   const synthetic = features.filter((f) => f.humanApprovedBy?.startsWith("seed:"));
@@ -447,6 +473,23 @@ export async function foundryTick(force = false): Promise<Record<string, unknown
     if (!runs.researchAt || now - runs.researchAt > 7 * 86_400_000) {
       did.ideas = (await generateResearchIdeas().catch(() => [])).length;
       await patchLastRuns({ researchAt: now });
+    }
+    // walk-forward backtests — weekly per replayable feature, so replay
+    // evidence stays current without anyone remembering to click
+    if (!runs.backtestAt || now - runs.backtestAt > 7 * 86_400_000) {
+      try {
+        const { runWalkForwardBacktest } = await import("./backtester");
+        const { replayableFeatures } = await import("@/lib/alpha/walkforward");
+        const ran: string[] = [];
+        for (const id of replayableFeatures()) {
+          const res = await runWalkForwardBacktest(id).catch(() => null);
+          if (res?.ok) ran.push(id);
+        }
+        did.backtested = ran;
+      } catch (e) {
+        did.backtested = `error: ${e}`;
+      }
+      await patchLastRuns({ backtestAt: now });
     }
     return did;
   } finally {

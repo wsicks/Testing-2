@@ -178,7 +178,7 @@ describe("closing-soon scanner", () => {
 });
 
 describe("registry", () => {
-  it("registers all thirteen strategies", () => {
+  it("registers all fifteen strategies", () => {
     expect(STRATEGIES.map((s) => s.id)).toEqual([
       "liquidity_spread",
       "price_movement",
@@ -193,6 +193,8 @@ describe("registry", () => {
       "wallet_shadow",
       "wallet_fade",
       "deadline_curvature",
+      "mm_absence",
+      "liquidity_vacuum",
     ]);
   });
 

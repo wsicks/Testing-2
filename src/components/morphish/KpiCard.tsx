@@ -41,6 +41,13 @@ export function KpiCard() {
         <Badge variant={(data.changeTodayUsd ?? 0) >= 0 ? "accent" : "neg"}>
           today {fmtSignedUsd(data.changeTodayUsd ?? 0)}
         </Badge>
+        {data.change7dUsd !== undefined ? (
+          <Badge variant={data.change7dUsd >= 0 ? "accent" : "neg"}>
+            7d {fmtSignedUsd(data.change7dUsd)}
+          </Badge>
+        ) : (
+          <Badge variant="default">7d — (needs history)</Badge>
+        )}
       </div>
       <div className="px-3 pt-2">
         <div className={cn("num text-4xl font-black tracking-tight", p.allTimePnl >= 0 ? "text-accent" : "text-ink")}>

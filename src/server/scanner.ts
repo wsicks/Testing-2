@@ -28,6 +28,7 @@ import { settleOpenOrders } from "./execution";
 import { getStore } from "./store";
 import { ensureFoundryTicker } from "./alpha/foundry";
 import { pushSignals } from "./hotpath/signalCache";
+import { getBaseline, updateBaselines } from "./hotpath/baselines";
 import { runMimicExecutor } from "./alpha/mimic";
 import { trackSignalOutcomes } from "./alpha/outcomes";
 import { getWalletIntel } from "./alpha/walletRadar";
@@ -82,6 +83,9 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
   try {
     const { markets } = await getMarkets();
     const now = Date.now();
+
+    // rolling spread/liquidity baselines — one in-memory pass per scan
+    measureSync("hot.baseline_update", () => updateBaselines(markets, now));
 
     // price-move feed events vs previous scan
     for (const m of markets) {
@@ -172,6 +176,7 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
           crossLinks,
           // cold-path built by the Wallet Radar ticker; in-memory read here
           walletIntel: getWalletIntel(m.conditionId),
+          baseline: getBaseline(m.conditionId),
           alpha: settings.alpha,
           settings,
           now,

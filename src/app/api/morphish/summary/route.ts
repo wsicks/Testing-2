@@ -33,9 +33,27 @@ export async function GET(req: NextRequest) {
     const orders = await store.listOrders(mode, ["open", "partially_filled"]);
     openOrderExposure = orders.reduce((a, o) => a + (o.size - o.filledSize) * o.price, 0);
   }
+  // 7d change from real portfolio snapshots — absent (never faked) until a
+  // week of history exists; anchored to the oldest snapshot ≤7d back that is
+  // at least 1d old
+  let change7dUsd: number | undefined;
+  try {
+    const snaps = await store.listPortfolioSnapshots(mode, 400);
+    const nowMs = Date.now();
+    const anchor = [...snaps]
+      .filter((x) => nowMs - x.ts >= 86_400_000 && nowMs - x.ts <= 7 * 86_400_000)
+      .sort((a, b) => a.ts - b.ts)[0];
+    if (anchor) {
+      const current = snaps.sort((a, b) => b.ts - a.ts)[0];
+      if (current) change7dUsd = Number((current.totalValue - anchor.totalValue).toFixed(2));
+    }
+  } catch {
+    /* snapshots unavailable → pill shows — */
+  }
   const payload = await morphishSummary(mode, {
     killSwitch: settings.killSwitch,
     openOrderExposure,
+    change7dUsd,
   });
   memo().set(mode, { at: Date.now(), payload });
   return NextResponse.json(payload);
