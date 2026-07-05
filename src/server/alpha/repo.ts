@@ -57,6 +57,7 @@ export interface AlphaLastRuns {
   researchAt?: number;
   disclosuresAt?: number;
   backtestAt?: number;
+  attentionAt?: number;
 }
 
 async function readList<T>(key: string): Promise<T[]> {

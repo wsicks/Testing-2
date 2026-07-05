@@ -22,6 +22,7 @@ import { EmptyNote, Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 type FeatureRow = AlphaFeature & { evidence: FeatureEvidence };
+type PaperPnl = Record<string, { realizedUsd: number; wins: number; losses: number }>;
 
 const STATUS_TONE: Record<string, "pos" | "neg" | "warn" | "default"> = {
   promoted: "pos",
@@ -40,7 +41,7 @@ function Drift({ v }: { v: number | undefined }) {
   return <Num tone={v > 0 ? "pos" : v < 0 ? "neg" : "muted"}>{(v * 100).toFixed(2)}c</Num>;
 }
 
-function FeatureCard({ f }: { f: FeatureRow }) {
+function FeatureCard({ f, pnl }: { f: FeatureRow; pnl?: PaperPnl[string] }) {
   const [open, setOpen] = useState(false);
   const act = useFoundryAction();
   const oneH = f.evidence.curve.find((c) => c.bucket === "b1h");
@@ -60,6 +61,13 @@ function FeatureCard({ f }: { f: FeatureRow }) {
         <Drift v={oneH && oneH.n > 0 ? oneH.avgDrift : undefined} />
         <span className="label">n</span>
         <Num>{f.evidence.outcomes}</Num>
+        {pnl && (pnl.wins + pnl.losses > 0) ? (
+          <>
+            <span className="label" title="realized paper PnL from AUTOPILOT-managed trades only">ap pnl</span>
+            <Num tone={pnl.realizedUsd}>${pnl.realizedUsd.toFixed(2)}</Num>
+            <span className="text-3xs text-ink-faint">{pnl.wins}W/{pnl.losses}L</span>
+          </>
+        ) : null}
       </button>
       {open ? (
         <div className="space-y-1 p-2 text-2xs">
@@ -215,9 +223,32 @@ export default function FoundryPage() {
         </p>
       </Panel>
 
+      {data?.attention.length ? (
+        <Panel title="news attention (gdelt, topic-level, reference-only)">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-2xs">
+            {data.attention.map((t) => (
+              <div key={t.label}>
+                <div className="label">{t.label} ({t.category})</div>
+                <Num tone={t.zScore >= 2 ? "warn" : undefined}>
+                  z {t.zScore.toFixed(1)}
+                </Num>
+                <span className="pl-1 text-3xs text-ink-faint">
+                  vol {t.recent.toFixed(2)} vs {t.baseline.toFixed(2)} · {fmtAgo(t.fetchedAt)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="pt-1 text-3xs text-ink-faint">
+            aggregate news volume per topic (15-min buckets, 3-day baseline).
+            Spikes (z ≥ 2) enter the disclosure feed as context — topic-level
+            data is never presented as market-level signal.
+          </p>
+        </Panel>
+      ) : null}
+
       <Panel title={`features (${features.length})`}>
         <div className="space-y-1">
-          {features.map((f) => <FeatureCard key={f.id} f={f} />)}
+          {features.map((f) => <FeatureCard key={f.id} f={f} pnl={data?.paperPnl?.[f.id]} />)}
         </div>
       </Panel>
 
@@ -230,7 +261,7 @@ export default function FoundryPage() {
           </EmptyNote>
         ) : (
           <div className="space-y-1">
-            {data.graveyard.map((f) => <FeatureCard key={f.id} f={f} />)}
+            {data.graveyard.map((f) => <FeatureCard key={f.id} f={f} pnl={data?.paperPnl?.[f.id]} />)}
           </div>
         )}
       </Panel>

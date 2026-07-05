@@ -469,6 +469,12 @@ export async function foundryTick(force = false): Promise<Record<string, unknown
       did.disclosures = await refreshDisclosures().catch((e) => `error: ${e}`);
       await patchLastRuns({ disclosuresAt: now });
     }
+    // attention (GDELT) — every 6h; sequential fetches respect the 1/5s limit
+    if (!runs.attentionAt || now - runs.attentionAt > 6 * 60 * 60_000) {
+      const { refreshAttention } = await import("./attention");
+      did.attention = await refreshAttention().catch((e) => `error: ${e}`);
+      await patchLastRuns({ attentionAt: now });
+    }
     // research ideation — weekly
     if (!runs.researchAt || now - runs.researchAt > 7 * 86_400_000) {
       did.ideas = (await generateResearchIdeas().catch(() => [])).length;

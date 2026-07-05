@@ -513,6 +513,8 @@ export interface FoundryResponse {
   ideas: import("@/lib/alpha/types").ResearchIdea[];
   lastRuns: Record<string, number | undefined>;
   walletIntel: { markets: number; builtAt: number };
+  attention: import("@/server/alpha/attention").AttentionTopic[];
+  paperPnl: Record<string, { realizedUsd: number; wins: number; losses: number }>;
   researchAgentPrompt: string;
 }
 

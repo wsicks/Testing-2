@@ -1,11 +1,15 @@
-# POLYQUANT Terminal
+# EVENTQUANT Terminal
 
-A real-time **Polymarket trading analytics terminal** with a fully automated
-trading engine: dense quant-style dashboard, live market scanner, order-book
-analytics, explainable signal engine, hard-limit risk engine, autonomous
-autopilot with a Thompson-sampling strategy allocator, full paper-trading
-loop, backtesting, Monte Carlo sizing, sub-20ms instrumented hot path, and an
-end-to-end audit trail.
+A real-time **multi-venue prediction-market intelligence terminal** with a
+fully automated trading engine and a self-improving research machine: dense
+quant-style dashboards (including the Morphish board), live scanner across
+Polymarket/Kalshi/Coinbase, order-book analytics, a 15-strategy explainable
+signal engine, hard-limit risk engine, autonomous autopilot with a
+Thompson-sampling allocator, the **Alpha Foundry** research lifecycle
+(idea → backtest → paper → prosecutor → human promotion → decay → graveyard),
+**Wallet Radar** public-wallet intelligence, purged walk-forward backtesting,
+Monte Carlo sizing, sub-20ms instrumented hot path, and an end-to-end audit
+trail.
 
 > **Honesty by construction** — the app never fabricates performance. Demo mode
 > shows deterministic, deliberately-unimpressive data labeled `SAMPLE`;
@@ -146,7 +150,7 @@ src/
 │   ├── polymarket/           # Gamma / CLOB / Data API adapters (typed,
 │   │                         # injectable fetch, offline-testable)
 │   ├── engine/
-│   │   ├── signals/          # 5 plug-in strategies + registry
+│   │   ├── signals/          # 15 plug-in strategies + registry
 │   │   ├── risk/             # risk engine, Kelly sizing, market grading
 │   │   ├── execution/        # paper matching engine (pure functions)
 │   │   ├── backtest/         # bar-by-bar simulator (no look-ahead)
@@ -155,7 +159,11 @@ src/
 └── server/                   # store (memory|prisma), cache (memory|redis),
                               # scanner, portfolio, execution, audit, SSE bus,
                               # live CLOB adapter (env-gated)
-prisma/                       # PostgreSQL schema + migrations (17 tables)
+├── lib/alpha/                # foundry math: scoring, walk-forward, sources
+├── server/alpha/             # foundry, prosecutor, backtester, wallet radar,
+│                             # outcomes/decay tracker, disclosures, attention
+├── server/morphish.ts        # Morphish board services (hot in-memory reads)
+prisma/                       # PostgreSQL schema + migrations (43 tables)
 scripts/                      # background worker + demo seeder
 tests/                        # unit (engines) + integration (adapters)
 ```
@@ -298,6 +306,66 @@ execution at bar `i+1`), the cost model (spread, slippage, fees) is applied
 per side, position sizing compounds on equity at entry, and every result is
 labeled **HISTORICAL SIMULATION** with its assumptions list.
 
+## Alpha Foundry — the research machine
+
+The foundry (`/foundry`) runs a continuous, evidence-gated research
+lifecycle: **idea → data_connected → backtesting → paper_testing →
+shadow_live → promoted → degraded → retired**, with `rejected` reachable from
+any stage and a **graveyard** that records every failure's class and lessons.
+Nothing promotes automatically:
+
+- **Outcome tracker** — every directional signal's forward drift is measured
+  at 5s/30s/5m/1h/24h (restart-lost captures are recorded MISSED, never
+  backfilled); rejected signals are tracked too, because a gate that
+  correctly blocked a trade still produces evidence.
+- **Purged walk-forward backtester** — point-in-time replay over month-scale
+  hourly histories with fold purging, per-entry friction, per-category
+  results and lucky-trade/lucky-market tripwires. Its first real run showed
+  the Kalman dislocation strategy LOSING −0.5c/entry after costs — which is
+  the point. Re-runs weekly, automatically.
+- **Alpha Prosecutor** — 14 evidence tests (sample size, net expectancy after
+  costs, spread/slippage/latency survival, out-of-sample persistence, lucky
+  concentration ≤25%, stale-price dependence, forward-mode spread, drawdown,
+  walk-forward verdict, source terms/reliability). Promotion requires the
+  prosecutor to pass **and** a named human approval; only promoted features
+  may ever route to live execution.
+- **Free API registry** (`/sources`) — 29 sources across prediction markets,
+  crypto, macro, politics/regulation, weather, news, sports with terms
+  summaries, rate limits, live health checks and honest statuses (key-required
+  sources are `disabled` with the env var named; congressional disclosures are
+  `manual_review` because no permitted structured API exists; sports is
+  `unavailable` rather than scraped).
+- **Disclosure Radar + Calendar/Attention slices** — Federal Register
+  documents, NWS severe-weather alerts and GDELT topic-attention spikes enter
+  a context feed (always human-review, never a trade), mapped to markets by
+  term overlap with publication lag displayed.
+
+## Wallet Radar — public-wallet intelligence
+
+`/wallets` discovers public Polymarket wallets from large trades and top
+holders, then scores them by **category-specific** skill (cat:/dur:/liq:
+dimensions) with explicit cost estimates, luck tests (best trade removed) and
+the spec's rejection rules. Following is evidence-gated: the `wallet_shadow`
+strategy only proposes when the wallet has ≥20 closed trades in the market's
+category **and** measured positive post-detection drift, the price is within
+2c of the wallet's entry, the wallet still holds, and spread/depth/clarity/
+lockup gates pass. `wallet_fade` trades only MEASURED toxicity; proven-wallet
+exits surface as NEUTRAL warnings. Follow modes: watch-only (default),
+confirm-only, paper-mimic, paper-fade — **live auto-copy does not exist as a
+code path**. No deanonymization: wallet addresses and the venue's own public
+pseudonyms only.
+
+## Morphish board
+
+`/dashboard/morphish` is the dense power-user view: command bar, real-PnL KPI
+card (with negative-expectancy and breakeven-win-rate diagnostics), Top GEM
+(the strongest signal surviving every hard gate — blocked candidates stay
+visible with reasons), a probability lattice over the whole universe, tail
+probability ridges for crypto threshold markets, a relationship graph
+(cross-venue links, wallet stances, rule conflicts), and a latency status
+strip. All panels read hot in-memory state; live trading is preview-only from
+this board.
+
 ## Performance architecture
 
 The app is split into an instrumented **hot path** and an async **cold path**.
@@ -350,10 +418,11 @@ registry rebuilds, and a simulated 1,000-updates/second ingest — all asserted
 ## Testing
 
 ```bash
-npm test                # 113 tests: unit (signals, risk, kelly, paper engine,
-                        # monte carlo, backtester, kalman/microstructure/regime,
-                        # bandit/policy/exits) + integration (API adapters with
-                        # recorded fixtures) + hot-path perf benchmarks
+npm test                # 207 tests: unit (signals, risk, kelly, paper engine,
+                        # monte carlo, backtester, walk-forward, kalman/regime,
+                        # bandit/policy/exits, alpha scoring/prosecutor/mimic)
+                        # + integration (API adapters, recorded fixtures)
+                        # + hot-path perf benchmarks
 npx tsc --noEmit        # strict type-check
 npm run build           # production build
 ```

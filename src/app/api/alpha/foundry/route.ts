@@ -14,23 +14,39 @@ import {
 } from "@/server/alpha/foundry";
 import { getLastRuns, listIdeas } from "@/server/alpha/repo";
 import { walletIntelInfo } from "@/server/alpha/walletRadar";
+import { getAttention } from "@/server/alpha/attention";
+import { getStore } from "@/server/store";
+import type { BanditState } from "@/lib/engine/autopilot/bandit";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   ensureBackgroundScanner();
   await ensureSeeded();
-  const [features, ideas, lastRuns] = await Promise.all([
+  const store = await getStore();
+  const [features, ideas, lastRuns, attention, bandit] = await Promise.all([
     featuresWithEvidence(),
     listIdeas(),
     getLastRuns(),
+    getAttention(),
+    store.getKV<BanditState>("autopilot:bandit"),
   ]);
+  // realized paper PnL per strategy — AUTOPILOT-MANAGED trades only (the
+  // bandit learns from realized exits); manual/mimic fills are not attributed
+  const paperPnl = Object.fromEntries(
+    Object.entries(bandit?.arms ?? {}).map(([k, a]) => [
+      k,
+      { realizedUsd: a.realizedPnlUsd, wins: a.wins, losses: a.losses },
+    ]),
+  );
   return NextResponse.json({
     features: features.filter((f) => !isGraveyard(f)),
     graveyard: features.filter(isGraveyard),
     ideas: [...ideas].reverse().slice(0, 30),
     lastRuns,
     walletIntel: walletIntelInfo(),
+    attention,
+    paperPnl,
     researchAgentPrompt: RESEARCH_AGENT_PROMPT,
   });
 }

@@ -351,7 +351,8 @@ export const SOURCE_SEEDS: Seed[] = [
     allowedUse: "news volume/timeline metadata for attention measurement",
     commercialUseAllowed: "conditions", redistributionAllowed: "conditions",
     signalCategoriesSupported: ["attention_imbalance"], marketCategoriesSupported: ["all"],
-    status: "disabled", note: "registered for the attention-imbalance feature (idea stage) — needs DATA VALIDATION pass before use",
+    status: "disabled",
+    note: "adapter ships throttle-safe (ONE topic per 6h, rotating): GDELT holds shared-egress IPs in cooldowns far beyond the documented 1/5s. Flips to active on first successful ingest; attention_imbalance advances only then.",
   }),
   S({
     sourceId: "fed_calendar", sourceName: "Federal Reserve releases & FOMC calendar",
