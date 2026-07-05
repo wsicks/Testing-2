@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
     actor: sp.get("actor") ?? undefined,
     severity: sp.get("severity") ?? undefined,
     q: sp.get("q") ?? undefined,
-    limit: Number(sp.get("limit") ?? 200),
+    // NaN-safe: ?limit=abc must not become slice(0, NaN) / prisma take:NaN
+    limit: Math.min(1_000, Math.max(1, Math.floor(Number(sp.get("limit")) || 200))),
   });
   return NextResponse.json({ events });
 }

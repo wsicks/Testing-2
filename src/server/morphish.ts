@@ -102,6 +102,9 @@ export interface MorphishSummary {
   changeTodayUsd?: number;
   /** value change vs the oldest snapshot within the last 7 days; absent until ≥1d of snapshot history exists */
   change7dUsd?: number;
+  /** ACTUAL span of the change7d window in days — during the first week of
+   * history the anchor is younger than 7d and the label must say so */
+  change7dSpanDays?: number;
   openOrderExposure: number;
   scan: { cycle: number; markets: number; updatedAt: number; ageMs: number };
   signals: { active: number; proposed: number; experimental: number };
@@ -112,7 +115,7 @@ export interface MorphishSummary {
 
 export async function morphishSummary(
   mode: TerminalMode,
-  opts: { killSwitch: boolean; openOrderExposure: number; change7dUsd?: number },
+  opts: { killSwitch: boolean; openOrderExposure: number; change7dUsd?: number; change7dSpanDays?: number },
 ): Promise<MorphishSummary> {
   const portfolio = await computePortfolio(mode);
   const sigs = recentSignals();
@@ -134,6 +137,7 @@ export async function morphishSummary(
     riskState: opts.killSwitch ? "LOCKED" : negativeExpectancy || portfolio.dailyPnl < 0 ? "WATCH" : "SAFE",
     changeTodayUsd: portfolio.dailyPnl,
     change7dUsd: opts.change7dUsd,
+    change7dSpanDays: opts.change7dSpanDays,
     openOrderExposure: opts.openOrderExposure,
     scan: { cycle: scanCycles(), markets: reg.size, updatedAt: reg.updatedAt, ageMs: reg.ageMs },
     signals: {
@@ -683,9 +687,15 @@ export async function morphishGraph(): Promise<GraphPayload> {
 
     const hist = new Array(10).fill(0);
     for (const s of matchScores) hist[Math.min(9, Math.floor(s * 10))] += 1;
+    // slice nodes first, then keep only edges whose BOTH endpoints survived —
+    // independent caps would hand the renderer dangling references
+    const keptNodes = [...nodes.values()].slice(0, 140);
+    const keptIds = new Set(keptNodes.map((n) => n.id));
     return {
-      nodes: [...nodes.values()].slice(0, 140),
-      edges: [...edgeById.values()].slice(0, 280),
+      nodes: keptNodes,
+      edges: [...edgeById.values()]
+        .filter((e) => keptIds.has(e.source) && keptIds.has(e.target))
+        .slice(0, 280),
       stats: {
         nodes: nodes.size,
         edges: edgeById.size,

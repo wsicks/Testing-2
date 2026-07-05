@@ -13,6 +13,9 @@ export const liquiditySpreadSignal: SignalStrategy = {
 
   run(ctx: SignalContext): SignalResult | null {
     const { market, book, settings, now } = ctx;
+    // tradability thresholds are calibrated to 0..1 outcome tokens; asset
+    // rows (reference spot products) produce meaningless "tradability"
+    if (market.outcomeType !== "binary") return null;
     const spread = book?.spread ?? market.spread;
     if (spread === undefined) return null;
 

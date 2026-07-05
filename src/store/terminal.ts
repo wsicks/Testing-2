@@ -37,6 +37,10 @@ export const useTerminal = create<TerminalState>()(
         ackTerms: s.ackTerms,
         selectedConditionId: s.selectedConditionId,
       }),
+      // hydrate AFTER mount (see StoreHydrator in providers): synchronous
+      // localStorage restore makes the client's first render differ from the
+      // server HTML → React hydration errors for any user with persisted state
+      skipHydration: true,
     },
   ),
 );

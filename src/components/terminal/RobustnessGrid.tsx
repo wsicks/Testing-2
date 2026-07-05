@@ -104,8 +104,10 @@ export function RobustnessGrid({
     },
     {
       label: "volatility",
-      state: move < 0.05 ? "ok" : move < 0.15 ? "warn" : "fail",
-      detail: `Δ24h ${(move * 100).toFixed(1)}c`,
+      // no market / no 24h change data = NA, never a fabricated "ok Δ 0.0c"
+      state:
+        m?.oneDayPriceChange === undefined ? "na" : move < 0.05 ? "ok" : move < 0.15 ? "warn" : "fail",
+      detail: m?.oneDayPriceChange !== undefined ? `Δ24h ${(move * 100).toFixed(1)}c` : "—",
     },
     {
       label: "resolution clarity",
@@ -121,8 +123,9 @@ export function RobustnessGrid({
     },
     {
       label: "exposure limit",
-      state: exposurePct < 60 ? "ok" : exposurePct < 85 ? "warn" : "fail",
-      detail: `${exposurePct.toFixed(1)}% deployed`,
+      // before the portfolio loads there is no measurement to grade
+      state: pf === undefined ? "na" : exposurePct < 60 ? "ok" : exposurePct < 85 ? "warn" : "fail",
+      detail: pf !== undefined ? `${exposurePct.toFixed(1)}% deployed` : "—",
     },
     {
       label: "slippage est.",

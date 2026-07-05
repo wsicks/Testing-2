@@ -18,6 +18,9 @@ export const microstructureSignal: SignalStrategy = {
 
   run(ctx: SignalContext): SignalResult | null {
     const { market, book, trades, settings, now } = ctx;
+    // micro-price pressure is a probability-space read; asset books are
+    // reference data and must never emit directional proposals
+    if (market.outcomeType !== "binary") return null;
     if (!book) return null;
     const m = computeMicroMetrics(book, trades ?? [], now);
     if (!m) return null;

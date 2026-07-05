@@ -147,8 +147,10 @@ export async function refreshAttention(): Promise<{ topics: number; spikes: numb
   const results = [...prior, fresh];
   await store.setKV(KV_ATTENTION, results);
 
-  // spikes (z ≥ 2) become context records mapped to candidate markets
-  const spikes = results.filter((t) => t.zScore >= 2);
+  // spikes (z ≥ 2) become context records — but ONLY from the topic measured
+  // THIS cycle. Prior topics are up to 48h stale; re-emitting them each 6h
+  // window would mint "fresh" spike records from old measurements.
+  const spikes = [fresh].filter((t) => t.zScore >= 2);
   let added = 0;
   if (spikes.length > 0) {
     const existing = await listDisclosures();

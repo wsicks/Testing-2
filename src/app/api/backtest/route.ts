@@ -23,7 +23,7 @@ const configSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const parsed = configSchema.safeParse(await req.json());
+  const parsed = configSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "invalid backtest config", details: parsed.error.flatten() },

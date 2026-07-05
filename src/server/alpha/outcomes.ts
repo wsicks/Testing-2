@@ -54,7 +54,12 @@ async function hydrate(): Promise<void> {
     const clean = loaded.filter((r) => r.entryMid > 0 && r.entryMid < 1);
     s.rows = [...clean.filter((r) => !have.has(r.id)), ...s.rows];
     s.hydrated = true;
-  })();
+  })().catch((err) => {
+    // a transient store failure must not wedge outcome tracking forever:
+    // clear the cached rejection so the next caller retries hydration
+    s.hydrating = null;
+    throw err;
+  });
   await s.hydrating;
 }
 
@@ -75,10 +80,12 @@ async function persist(): Promise<void> {
   }
 }
 
-function midFor(conditionId: string): number | undefined {
+function midFor(conditionId: string): { mid: number; fetchedAt: number } | undefined {
   const m = regByCondition(conditionId);
   if (!m) return undefined;
-  return m.midpoint ?? m.yesPrice;
+  const mid = m.midpoint ?? m.yesPrice;
+  if (mid === undefined) return undefined;
+  return { mid, fetchedAt: m.fetchedAt };
 }
 
 /** direction-adjusted drift: positive = the market moved the signal's way */
@@ -100,12 +107,22 @@ interface ForwardUpdate {
  */
 function capture(o: AlphaOutcome, bucket: DecayBucketKey, now: number): ForwardUpdate | null {
   if (o.buckets[bucket]?.drift !== undefined || o.buckets[bucket]?.missed) return null;
-  const mid = midFor(o.conditionId);
-  if (mid === undefined) {
+  const r = midFor(o.conditionId);
+  if (r === undefined) {
     o.buckets[bucket] = { missed: true, at: now };
     return null;
   }
-  o.buckets[bucket] = { drift: Number(adjustedDrift(o, mid).toFixed(4)), at: now };
+  // timer-owned short buckets: the registry refreshes on the ~30s scan
+  // cadence, so at +5s the "current" price is usually the SAME row the entry
+  // mid came from — recording it would fabricate a 0.0c "5-second drift" and
+  // permanently blind every latency measurement downstream (prosecutor
+  // latency test, alphaScore latencyPenalty). A capture without a price
+  // fetched AFTER the signal existed is honestly MISSED, not zero.
+  if ((bucket === "b5s" || bucket === "b30s") && r.fetchedAt <= o.createdAt) {
+    o.buckets[bucket] = { missed: true, at: now };
+    return null;
+  }
+  o.buckets[bucket] = { drift: Number(adjustedDrift(o, r.mid).toFixed(4)), at: now };
   if (bucket === "b1h" && o.walletId) {
     // convert SIGNAL drift to the WALLET's own drift: a fade that worked is
     // NEGATIVE evidence about the faded wallet, not positive

@@ -14,7 +14,7 @@
 import type { NormalizedMarket, SignalResult } from "@/lib/types";
 import { audit } from "../audit";
 import { registerManagedLot } from "../autopilot";
-import { placePaperOrder } from "../execution";
+import { cancelOrder, placePaperOrder } from "../execution";
 import { getStore } from "../store";
 
 const MAX_MIMICS_PER_TICK = 2;
@@ -84,6 +84,16 @@ export async function runMimicExecutor(
       });
       if (!res.rejected) {
         placed += 1;
+        // IOC semantics: cancel any unfilled remainder NOW. A resting mimic
+        // order that settlement fills minutes later would create shares no
+        // ManagedPosition covers — an orphaned lot the exit sweep never sells.
+        if (
+          res.order &&
+          res.order.filledSize < res.order.size &&
+          ["open", "partially_filled", "created"].includes(res.order.status)
+        ) {
+          await cancelOrder(res.order.id, "system");
+        }
         // register the filled lot for exit management — the exit sweep runs
         // every scanner tick even with autopilot OFF, so a mimic test is
         // never an orphaned position. Exit plan mirrors the ECL convention

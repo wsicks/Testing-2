@@ -326,13 +326,21 @@ export async function fetchKalshiTrades(ticker: string, opts: HttpOpts = {}): Pr
       `${KALSHI_API_URL}/markets/trades` + qs({ ticker, limit: 30 }),
       opts,
     );
-    return (res.trades ?? []).map((t) => ({
-      side: (t.taker_side === "no" ? "SELL" : "BUY") as RecentTrade["side"],
-      price: kalshiPrice(t.yes_price_dollars, t.yes_price) ?? 0,
-      size: fp(t.count_fp, t.count),
-      ts: t.created_time ? new Date(t.created_time).getTime() : Date.now(),
-      outcome: "Yes",
-    }));
+    return (res.trades ?? []).flatMap((t) => {
+      // a trade with no parseable price is DROPPED, not invented as 0c —
+      // a fabricated 0c print becomes a 100c point in derived NO histories
+      const price = kalshiPrice(t.yes_price_dollars, t.yes_price);
+      if (price === undefined) return [];
+      return [
+        {
+          side: (t.taker_side === "no" ? "SELL" : "BUY") as RecentTrade["side"],
+          price,
+          size: fp(t.count_fp, t.count),
+          ts: t.created_time ? new Date(t.created_time).getTime() : Date.now(),
+          outcome: "Yes",
+        },
+      ];
+    });
   });
 }
 

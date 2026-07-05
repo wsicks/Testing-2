@@ -27,9 +27,9 @@ import {
   summarizeEvidence,
 } from "@/lib/alpha/score";
 import { seedSourceRecords } from "@/lib/alpha/sources.seed";
-import { DEFAULT_SETTINGS } from "@/lib/constants";
 import { genId } from "@/lib/utils";
 import { audit } from "../audit";
+import { logError } from "../errorLog";
 import { getStore } from "../store";
 import { allOutcomes } from "./outcomes";
 import {
@@ -80,6 +80,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { id: "wallet_shadow", name: "Smart Wallet Shadow", thesis: "Wallets with persistent category-specific skill enter before broad repricing; following is profitable only while entry drift < 2c and forward evidence stays positive.", whyMissed: "Copiers chase globally-famous wallets without category skill, forward evidence or drift limits.", dataSources: ["polymarket_data"], categoryScope: ["all"], status: "paper_testing", killCriteria: "avg forward drift after detection ≤ 0 over 30 tracked entries; or crowding kills copyable edge" },
   { id: "wallet_fade", name: "Smart Wallet Fade / Exit Warning", thesis: "Reliably-wrong wallets and crowd-chased entries mean-revert; skilled-wallet exits warn before repricing.", dataSources: ["polymarket_data"], categoryScope: ["all"], status: "paper_testing", killCriteria: "fade drift ≤ 0 over 30 signals" },
   { id: "deadline_curvature", name: "Deadline Curvature", thesis: "Terminal threshold markets must reprice nonlinearly as τ→0; books that decay linearly lag the model curve.", dataSources: ["coinbase_public"], categoryScope: ["crypto"], status: "paper_testing", killCriteria: "model-market gap shows no forward drift over 50 observations" },
+  { id: "favorite_convergence", name: "Favorite Convergence", thesis: "Heavy favorites (85–97c) near resolution drift toward 1 more often than price implies (favorite–longshot bias, confirmed only by OUR drift-by-price profile, never assumed). Structurally high hit rate with negative skew: the adverse-flow, momentum, clarity and lockup gates exist to dodge the rare collapse that erases many small wins.", whyMissed: "Naive favorite-buying ignores that one 90c collapse costs ~18 small wins; harvesting the bias safely is a risk-gating problem, not a signal problem.", dataSources: ["polymarket_gamma", "polymarket_clob"], categoryScope: ["all"], status: "paper_testing", killCriteria: "measured 1h hit rate < 55% over 100 signals, or net drift after per-signal friction ≤ 0, or drift-by-price profile shows no positive curvature in the 80–100c buckets after 300 samples" },
   // ideas — recorded, not built (honest backlog)
   { id: "resolution_source_lag", name: "Resolution Source Lag", thesis: "Official resolution sources publish before markets reprice; generalizes ECL beyond crypto.", dataSources: ["federal_register", "nws"], categoryScope: ["politics", "weather", "macro"], status: "idea", killCriteria: "no measurable lag after 30 mapped events" },
   { id: "attention_imbalance", name: "Attention Imbalance Index", thesis: "News volume spiking without price movement (or vice versa) flags hidden lag or informed flow.", dataSources: ["gdelt"], categoryScope: ["politics", "geopolitics"], status: "idea", killCriteria: "GDELT fails DATA VALIDATION (freshness/terms), or index has no forward correlation over 100 observations" },
@@ -211,14 +212,19 @@ function sourceReliability(f: AlphaFeature, sources: SourceRecord[]): number {
 }
 
 export async function runProsecutor(featureId: string): Promise<ProsecutorVerdict | null> {
-  const [features, outcomes, sources] = await Promise.all([
+  const store = await getStore();
+  const [features, outcomes, sources, settings] = await Promise.all([
     listFeatures(),
     allOutcomes(),
     listSources(),
+    store.getSettings(),
   ]);
   const feature = features.find((f) => f.id === featureId);
   if (!feature) return null;
   const cutoff = Date.now() - 7 * 86_400_000;
+  // the promotion gate must charge the USER'S declared costs, not
+  // compile-time defaults — an edge that dies under the configured
+  // slippage/fees must die here too
   const verdict = prosecute({
     feature,
     evidence: summarizeEvidence(featureId, outcomes),
@@ -227,8 +233,8 @@ export async function runProsecutor(featureId: string): Promise<ProsecutorVerdic
       outcomes.filter((o) => o.createdAt >= cutoff),
     ),
     sources,
-    slippageBps: DEFAULT_SETTINGS.slippageBps,
-    maxSpread: DEFAULT_SETTINGS.maxSpread,
+    slippageBps: settings.slippageBps + settings.feeRateBps,
+    maxSpread: settings.maxSpread,
   });
   feature.lastVerdict = verdict;
   feature.updatedAt = Date.now();
@@ -253,6 +259,15 @@ export async function approvePromotion(
   // mutating a pre-prosecution object here would erase it on write-back
   const f = (await listFeatures()).find((x) => x.id === featureId);
   if (!f) return { ok: false, reason: "unknown feature" };
+  // graveyard is terminal from this door: a retired/rejected feature must be
+  // consciously revived through the lifecycle, never promoted directly with
+  // its failure record still attached
+  if (f.status === "retired" || f.status === "rejected") {
+    return {
+      ok: false,
+      reason: `feature is ${f.status} (${f.failureReason ?? "no reason recorded"}) — graveyard features cannot be promoted directly`,
+    };
+  }
   f.status = "promoted";
   f.humanApprovedAt = Date.now();
   f.humanApprovedBy = approvedBy;
@@ -302,22 +317,32 @@ export async function liveEligibleStrategies(): Promise<Set<string>> {
 
 export async function runDecayMonitor(): Promise<string[]> {
   const [features, outcomes] = await Promise.all([listFeatures(), allOutcomes()]);
-  const demoted: string[] = [];
   const cutoff = Date.now() - 7 * 86_400_000;
+  // decide first, then apply to a FRESH read: the audit awaits inside this
+  // loop leave a window where a concurrent human approval/retire would be
+  // erased by writing back this pre-loop snapshot
+  const verdicts: { id: string; detail: string }[] = [];
   for (const f of features) {
-    if (f.status !== "promoted" && f.status !== "shadow_live" && f.status !== "paper_testing") continue;
+    if (f.status !== "promoted") continue;
     const lifetime = summarizeEvidence(f.id, outcomes);
     const recent = summarizeEvidence(f.id, outcomes.filter((o) => o.createdAt >= cutoff));
     const verdict = decayVerdict(lifetime, recent);
-    if (verdict.decayed && f.status === "promoted") {
+    if (verdict.decayed) verdicts.push({ id: f.id, detail: verdict.detail });
+  }
+  const demoted: string[] = [];
+  if (verdicts.length) {
+    const fresh = await listFeatures();
+    for (const v of verdicts) {
+      const f = fresh.find((x) => x.id === v.id);
+      if (!f || f.status !== "promoted") continue; // state moved on — respect it
       f.status = "degraded";
-      f.failureReason = verdict.detail;
+      f.failureReason = v.detail;
       f.updatedAt = Date.now();
       demoted.push(f.id);
-      await audit("system", "alpha_feature_degraded", `Feature ${f.name} DEGRADED: ${verdict.detail} — live routing disabled`, { severity: "warn" });
+      await audit("system", "alpha_feature_degraded", `Feature ${f.name} DEGRADED: ${v.detail} — live routing disabled`, { severity: "warn" });
     }
+    if (demoted.length) await saveFeatures(fresh);
   }
-  if (demoted.length) await saveFeatures(features);
   return demoted;
 }
 
@@ -385,9 +410,27 @@ export async function generateResearchIdeas(): Promise<ResearchIdea[]> {
 
 // ── Source health ────────────────────────────────────────────────────────────
 
+/** minimum spacing between health sweeps — the API route has no other gate */
+const HEALTH_MIN_INTERVAL_MS = 10 * 60_000;
+const hstate = globalThis as unknown as { __eqHealthAt?: number };
+
 export async function runSourceHealthChecks(): Promise<number> {
+  // cooldown: a spammed POST /api/alpha/sources must not re-ping every
+  // external endpoint on each call
+  const last = hstate.__eqHealthAt ?? 0;
+  if (Date.now() - last < HEALTH_MIN_INTERVAL_MS) return 0;
+  hstate.__eqHealthAt = Date.now();
+
   const sources = await listSources();
-  let checked = 0;
+  // probe first, then apply results to a FRESH read: the probe loop takes
+  // seconds-to-minutes, and writing the pre-loop snapshot back would erase
+  // any recordSourceOutcome (e.g. a GDELT failure) landed meanwhile
+  const results = new Map<
+    string,
+    Partial<Pick<SourceRecord, "lastLatencyMs" | "lastSuccessfulCall" | "lastFailedCall" | "lastError">> & {
+      ok: boolean;
+    }
+  >();
   for (const s of sources) {
     if (!s.healthPath || s.status === "banned" || s.status === "unavailable") continue;
     const url = `${s.baseUrl}${s.healthPath}`;
@@ -400,28 +443,36 @@ export async function runSourceHealthChecks(): Promise<number> {
         headers: { accept: "application/json", "user-agent": "eventquant-terminal (source-health)" },
       });
       clearTimeout(timer);
-      const ms = Date.now() - t0;
-      s.lastLatencyMs = ms;
-      if (res.ok) {
-        s.lastSuccessfulCall = Date.now();
-        s.reliabilityScore = Math.min(1, s.reliabilityScore * 0.9 + 0.1);
-        if (s.status === "degraded") s.status = "active";
-      } else {
-        s.lastFailedCall = Date.now();
-        s.lastError = `HTTP ${res.status}`;
-        s.reliabilityScore = Math.max(0, s.reliabilityScore * 0.9);
-        if (s.status === "active") s.status = "degraded";
-      }
+      results.set(s.sourceId, {
+        ok: res.ok,
+        lastLatencyMs: Date.now() - t0,
+        ...(res.ok ? { lastSuccessfulCall: Date.now() } : { lastFailedCall: Date.now(), lastError: `HTTP ${res.status}` }),
+      });
     } catch (err) {
-      s.lastFailedCall = Date.now();
-      s.lastError = String(err).slice(0, 120);
+      results.set(s.sourceId, {
+        ok: false,
+        lastLatencyMs: Date.now() - t0,
+        lastFailedCall: Date.now(),
+        lastError: String(err).slice(0, 120),
+      });
+    }
+  }
+  const fresh = await listSources();
+  for (const s of fresh) {
+    const r = results.get(s.sourceId);
+    if (!r) continue;
+    const { ok: _ok, ...fields } = r;
+    Object.assign(s, fields);
+    if (r.ok) {
+      s.reliabilityScore = Math.min(1, s.reliabilityScore * 0.9 + 0.1);
+      if (s.status === "degraded") s.status = "active";
+    } else {
       s.reliabilityScore = Math.max(0, s.reliabilityScore * 0.9);
       if (s.status === "active") s.status = "degraded";
     }
-    checked += 1;
   }
-  await saveSources(sources);
-  return checked;
+  if (results.size) await saveSources(fresh);
+  return results.size;
 }
 
 // ── Background ticker ────────────────────────────────────────────────────────
@@ -451,19 +502,26 @@ export async function foundryTick(force = false): Promise<Record<string, unknown
     const now = Date.now();
     const did: Record<string, unknown> = {};
 
+    // per-task failures land in the runtime error log (deduped, persisted),
+    // not just in this tick's transient return value
+    const fail = (task: string) => (e: unknown) => {
+      logError(`foundry:${task}`, e);
+      return `error: ${e}`;
+    };
+
     // wallet intel — every ~10 min (feeds live wallet strategies)
     if (!runs.intelAt || now - runs.intelAt > 10 * 60_000) {
-      did.intelMarkets = await refreshWalletIntel().catch((e) => `error: ${e}`);
+      did.intelMarkets = await refreshWalletIntel().catch(fail("wallet_intel"));
       await patchLastRuns({ intelAt: now });
     }
     // source health — hourly
     if (!runs.sourceHealthAt || now - runs.sourceHealthAt > 60 * 60_000) {
-      did.sourcesChecked = await runSourceHealthChecks().catch((e) => `error: ${e}`);
+      did.sourcesChecked = await runSourceHealthChecks().catch(fail("source_health"));
       await patchLastRuns({ sourceHealthAt: now });
     }
     // decay monitor — hourly
     if (!runs.decayAt || now - runs.decayAt > 60 * 60_000) {
-      did.demoted = await runDecayMonitor().catch((e) => [`error: ${e}`]);
+      did.demoted = await runDecayMonitor().catch((e) => [fail("decay_monitor")(e)]);
       await patchLastRuns({ decayAt: now });
     }
     // wallet discovery + rescoring — daily
@@ -476,19 +534,19 @@ export async function foundryTick(force = false): Promise<Record<string, unknown
         did.discovery = await discoverWallets(top);
         did.rescored = await rescoreTrackedWallets();
       } catch (e) {
-        did.discovery = `error: ${e}`;
+        did.discovery = fail("wallet_discovery")(e);
       }
       await patchLastRuns({ discoveryAt: now });
     }
     // disclosures — every 6h
     if (!runs.disclosuresAt || now - runs.disclosuresAt > 6 * 60 * 60_000) {
-      did.disclosures = await refreshDisclosures().catch((e) => `error: ${e}`);
+      did.disclosures = await refreshDisclosures().catch(fail("disclosures"));
       await patchLastRuns({ disclosuresAt: now });
     }
     // attention (GDELT) — every 6h; sequential fetches respect the 1/5s limit
     if (!runs.attentionAt || now - runs.attentionAt > 6 * 60 * 60_000) {
       const { refreshAttention } = await import("./attention");
-      did.attention = await refreshAttention().catch((e) => `error: ${e}`);
+      did.attention = await refreshAttention().catch(fail("attention"));
       await patchLastRuns({ attentionAt: now });
     }
     // research ideation — weekly
@@ -509,7 +567,7 @@ export async function foundryTick(force = false): Promise<Record<string, unknown
         }
         did.backtested = ran;
       } catch (e) {
-        did.backtested = `error: ${e}`;
+        did.backtested = fail("backtests")(e);
       }
       await patchLastRuns({ backtestAt: now });
     }
@@ -525,9 +583,10 @@ export function ensureFoundryTicker(): void {
   const s = tstate();
   if (s.timer) return;
   s.timer = setInterval(() => {
-    foundryTick(false).catch((err) =>
-      console.error("[eventquant] foundry tick failed:", err),
-    );
+    foundryTick(false).catch((err) => {
+      logError("foundry:tick", err);
+      console.error("[eventquant] foundry tick failed:", err);
+    });
   }, 5 * 60_000);
   if (typeof s.timer === "object" && "unref" in s.timer) s.timer.unref();
 }

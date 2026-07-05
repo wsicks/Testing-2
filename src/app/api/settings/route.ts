@@ -92,7 +92,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const parsed = patchSchema.safeParse(await req.json());
+  const parsed = patchSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "invalid settings", details: parsed.error.flatten() },
@@ -101,7 +101,16 @@ export async function PATCH(req: NextRequest) {
   }
   const store = await getStore();
   const before = await store.getSettings();
-  const settings = await store.patchSettings(parsed.data);
+  // the kill switch has engage side effects (cancel open orders/intents,
+  // stop scanners) that a bare settings write would skip — route it through
+  // the one true implementation and patch everything else normally
+  const { killSwitch, ...rest } = parsed.data;
+  let settings = await store.patchSettings(rest);
+  if (killSwitch !== undefined && killSwitch !== before.killSwitch) {
+    const { setKillSwitch } = await import("@/server/execution");
+    await setKillSwitch(killSwitch);
+    settings = await store.getSettings();
+  }
   const changed = Object.keys(parsed.data).join(", ");
   await audit("user", "settings_changed", `Settings updated: ${changed}`, {
     data: { changed: parsed.data },

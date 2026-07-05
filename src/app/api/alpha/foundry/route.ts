@@ -17,6 +17,8 @@ import { walletIntelInfo } from "@/server/alpha/walletRadar";
 import { getAttention } from "@/server/alpha/attention";
 import { allOutcomes } from "@/server/alpha/outcomes";
 import { confluenceMatrix, driftByPriceProfile } from "@/lib/alpha/evidenceLab";
+import { strategyHitRates } from "@/lib/alpha/hitRate";
+import { listErrors } from "@/server/errorLog";
 import { getStore } from "@/server/store";
 import type { BanditState } from "@/lib/engine/autopilot/bandit";
 
@@ -37,6 +39,10 @@ export async function GET() {
   // Evidence Lab — the machine reading its own outcome archive
   const confluence = confluenceMatrix(outcomes);
   const driftProfile = driftByPriceProfile(outcomes);
+  // measured per-strategy win rates (1h horizon) + Wilson floors — the same
+  // numbers the autopilot hit-rate governor gates on
+  const hitRates = strategyHitRates(outcomes);
+  const runtimeErrors = (await listErrors()).slice(0, 30);
   // realized paper PnL per strategy — AUTOPILOT-MANAGED trades only (the
   // bandit learns from realized exits); manual/mimic fills are not attributed
   const paperPnl = Object.fromEntries(
@@ -55,6 +61,8 @@ export async function GET() {
     paperPnl,
     confluence,
     driftProfile,
+    hitRates,
+    runtimeErrors,
     researchAgentPrompt: RESEARCH_AGENT_PROMPT,
   });
 }
@@ -82,7 +90,7 @@ const actionSchema = z.discriminatedUnion("action", [
 ]);
 
 export async function POST(req: NextRequest) {
-  const parsed = actionSchema.safeParse(await req.json());
+  const parsed = actionSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid action", details: parsed.error.flatten() }, { status: 400 });
   }

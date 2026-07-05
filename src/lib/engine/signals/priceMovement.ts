@@ -17,6 +17,9 @@ export const priceMovementSignal: SignalStrategy = {
 
   run(ctx: SignalContext): SignalResult | null {
     const { market, history, settings, now } = ctx;
+    // probability-move logic only exists for binary outcome tokens — on an
+    // asset row (Coinbase spot) a "0.09 move" is 9 DOLLARS-ish, not 9 points
+    if (market.outcomeType !== "binary") return null;
     const move1h = market.oneHourPriceChange ?? 0;
     const move24h = market.oneDayPriceChange ?? 0;
     if (market.oneHourPriceChange === undefined && market.oneDayPriceChange === undefined)

@@ -139,7 +139,7 @@ export const walletShadowSignal: SignalStrategy = {
         `rule clarity ${ruleClarity.toFixed(2)} (${clarity.level.toUpperCase()}) vs min 0.90`, ruleClarity, 0.9),
       check("close_buffer", !blocked("close_too_near"),
         minutesToClose !== undefined ? `${Math.round(minutesToClose)}min to close (min 60 for a safe exit)` : "no close time — buffer unverifiable, treated as open"),
-      check("capital_lockup", mimic.remainingEdge - lockup > 0 || mimic.remainingEdge === 0,
+      check("capital_lockup", mimic.remainingEdge - lockup > 0,
         `remaining edge ${(mimic.remainingEdge * 100).toFixed(2)}c vs lockup cost ${(lockup * 100).toFixed(2)}c (${daysToClose.toFixed(1)}d to settlement @10%/yr)`,
         mimic.remainingEdge - lockup, 0),
     ];

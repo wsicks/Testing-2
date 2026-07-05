@@ -517,6 +517,8 @@ export interface FoundryResponse {
   paperPnl: Record<string, { realizedUsd: number; wins: number; losses: number }>;
   confluence: import("@/lib/alpha/evidenceLab").ConfluenceResult;
   driftProfile: import("@/lib/alpha/evidenceLab").DriftProfile;
+  hitRates: import("@/lib/alpha/hitRate").StrategyHitRate[];
+  runtimeErrors: import("@/server/errorLog").ErrorLogEntry[];
   researchAgentPrompt: string;
 }
 

@@ -135,8 +135,12 @@ export function LatticePanel({
         <div className="relative min-w-0 flex-1 overflow-x-auto">
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 540 }}>
             <rect x={0} y={0} width={W} height={H} fill="transparent" />
-            {/* 50% / breakeven guide */}
-            <line x1={X(0.5)} y1={PAD / 2} x2={X(0.5)} y2={H - PAD} stroke="#111" strokeDasharray="4 3" strokeWidth={1} opacity={0.5} />
+            {/* 50% probability guide — only meaningful when x IS probability;
+                in prob_time mode x is log time-to-close and a line at x=0.5
+                would mark nothing */}
+            {axis !== "prob_time" ? (
+              <line x1={X(0.5)} y1={PAD / 2} x2={X(0.5)} y2={H - PAD} stroke="#111" strokeDasharray="4 3" strokeWidth={1} opacity={0.5} />
+            ) : null}
             {axis === "prob_edge" ? (
               <line x1={PAD} y1={Y(0)} x2={W - PAD} y2={Y(0)} stroke="#999" strokeWidth={0.7} />
             ) : null}

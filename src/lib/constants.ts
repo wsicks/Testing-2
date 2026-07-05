@@ -46,7 +46,7 @@ export const APP_NAME = "POLYQUANT";
  */
 export const DEFAULT_AUTOPILOT: AutopilotConfig = {
   mode: "off",
-  enabledStrategies: ["dislocation", "microstructure", "price_movement"],
+  enabledStrategies: ["dislocation", "microstructure", "price_movement", "favorite_convergence"],
   minScore: 60,
   perTradeUsd: 25,
   maxOpenPositions: 5,

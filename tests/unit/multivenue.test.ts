@@ -156,6 +156,24 @@ describe("crypto threshold parser", () => {
     );
   });
 
+  it("past-tense touch phrasings parse identically to present tense", () => {
+    // "have reached" is the SAME touch contract as "reach" — a tense change
+    // must never silently flip a touch into a terminal (that mispricing is
+    // exactly the touch/terminal house rule)
+    expect(parseCryptoThreshold("Will Bitcoin have reached $150,000 by December 31?")).toEqual(
+      expect.objectContaining({ direction: "above", kind: "touch" }),
+    );
+    expect(parseCryptoThreshold("Will ETH have dropped below $2,000 by September?")).toEqual(
+      expect.objectContaining({ direction: "below", kind: "touch" }),
+    );
+    expect(parseCryptoThreshold("Will SOL have fallen under $100 this month?")).toEqual(
+      expect.objectContaining({ direction: "below", kind: "touch" }),
+    );
+    expect(parseCryptoThreshold("Will BTC have dipped under $80,000 in October?")).toEqual(
+      expect.objectContaining({ direction: "below", kind: "touch" }),
+    );
+  });
+
   it("returns null on ambiguity or implausible prices", () => {
     expect(parseCryptoThreshold("Will Bitcoin move this year?")).toBeNull(); // no threshold
     expect(parseCryptoThreshold("Will BTC be between $90k and $100k?")).toBeNull(); // no direction word... has neither above/below

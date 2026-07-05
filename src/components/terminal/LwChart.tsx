@@ -26,10 +26,16 @@ export interface LwOverlayLine {
   points: { t: number; v: number }[];
 }
 
+// module-level constant: a `= []` default parameter allocates a NEW array
+// every render, and it sits in the chart effect's dependency array — the
+// chart would be torn down and rebuilt (losing zoom/pan) on every parent
+// render
+const NO_OVERLAYS: LwOverlayLine[] = [];
+
 export function LwChart({
   candles,
   mode,
-  overlays = [],
+  overlays = NO_OVERLAYS,
   threshold,
   height = 260,
 }: {

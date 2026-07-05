@@ -43,7 +43,7 @@ export function KpiCard() {
         </Badge>
         {data.change7dUsd !== undefined ? (
           <Badge variant={data.change7dUsd >= 0 ? "accent" : "neg"}>
-            7d {fmtSignedUsd(data.change7dUsd)}
+            {data.change7dSpanDays ?? 7}d {fmtSignedUsd(data.change7dUsd)}
           </Badge>
         ) : (
           <Badge variant="default">7d — (needs history)</Badge>
@@ -89,7 +89,8 @@ export function KpiCard() {
         <Field k="exposure" v={fmtUsd(p.exposure)} />
         <Field k="cash" v={fmtUsd(p.cash)} />
         <Field k="open orders" v={fmtUsd(data.openOrderExposure)} />
-        <Field k="positions" v={String(p.positions.length)} />
+        {/* open positions only — closed size-0 records would overstate this */}
+        <Field k="positions" v={String(p.positions.filter((x) => x.size > 0).length)} />
         <Field
           k="liquidity risk"
           v={p.liquidityRiskScore !== undefined ? `${(p.liquidityRiskScore * 100).toFixed(0)}%` : "—"}

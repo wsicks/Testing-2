@@ -239,12 +239,15 @@ export async function fetchCoinbaseTrades(productId: string, opts: HttpOpts = {}
       `${COINBASE_API_URL}/market/products/${encodeURIComponent(productId)}/ticker` + qs({ limit: 30 }),
       opts,
     );
-    return (res.trades ?? []).map((t) => ({
-      side: (t.side === "SELL" ? "SELL" : "BUY") as RecentTrade["side"],
-      price: Number(t.price),
-      size: Number(t.size),
-      ts: new Date(t.time).getTime(),
-    }));
+    return (res.trades ?? [])
+      .map((t) => ({
+        side: (t.side === "SELL" ? "SELL" : "BUY") as RecentTrade["side"],
+        price: Number(t.price),
+        size: Number(t.size),
+        ts: new Date(t.time).getTime(),
+      }))
+      // same guard the candles path applies — NaN rows are dropped, never served
+      .filter((t) => Number.isFinite(t.price) && Number.isFinite(t.size) && Number.isFinite(t.ts));
   });
 }
 

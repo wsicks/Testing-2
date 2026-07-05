@@ -27,6 +27,7 @@ import { maybeSnapshotPortfolio } from "./portfolio";
 import { settleOpenOrders } from "./execution";
 import { getStore } from "./store";
 import { ensureFoundryTicker } from "./alpha/foundry";
+import { logError } from "./errorLog";
 import { pushSignals } from "./hotpath/signalCache";
 import { getBaseline, updateBaselines } from "./hotpath/baselines";
 import { swapBookSnapshot } from "./hotpath/bookMemory";
@@ -171,22 +172,25 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       // cross-market relation scans are O(universe) per market, so they only
       // run for markets liquid enough to ever pass the risk engine.
       const results = measureSync("hot.signal_market", () =>
-        runAllStrategies({
-          market: m,
-          book: books.get(m.conditionId),
-          prevBook: prevBooks.get(m.conditionId),
-          history: histories.get(m.conditionId),
-          trades: tapes.get(m.conditionId),
-          relatedMarkets: m.volume24h >= 10_000 ? markets : undefined,
-          reference: referenceFor(m),
-          crossLinks,
-          // cold-path built by the Wallet Radar ticker; in-memory read here
-          walletIntel: getWalletIntel(m.conditionId),
-          baseline: getBaseline(m.conditionId),
-          alpha: settings.alpha,
-          settings,
-          now,
-        }),
+        runAllStrategies(
+          {
+            market: m,
+            book: books.get(m.conditionId),
+            prevBook: prevBooks.get(m.conditionId),
+            history: histories.get(m.conditionId),
+            trades: tapes.get(m.conditionId),
+            relatedMarkets: m.volume24h >= 10_000 ? markets : undefined,
+            reference: referenceFor(m),
+            crossLinks,
+            // cold-path built by the Wallet Radar ticker; in-memory read here
+            walletIntel: getWalletIntel(m.conditionId),
+            baseline: getBaseline(m.conditionId),
+            alpha: settings.alpha,
+            settings,
+            now,
+          },
+          (strategyId, err) => logError(`strategy:${strategyId}`, err, m.conditionId),
+        ),
       );
       for (const sig of results) {
         if (seen.has(`${sig.strategy}:${sig.conditionId}`)) continue;
@@ -233,13 +237,24 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       await trackSignalOutcomes(toPersist, markets);
       await runMimicExecutor(toPersist, markets);
     } catch (err) {
+      logError("scanner:outcomes_mimic", err);
       console.error("[eventquant] alpha outcome/mimic step failed:", err);
     }
 
-    // housekeeping piggybacked on the scan tick (settlement is mutex-guarded)
-    await settleOpenOrders("paper");
-    await settleOpenOrders("demo");
-    await maybeSnapshotPortfolio("paper");
+    // housekeeping piggybacked on the scan tick (settlement is mutex-guarded).
+    // Each step is isolated: a settlement failure must never prevent the
+    // autopilot exit sweep below from running — exits are the safety net.
+    try {
+      await settleOpenOrders("paper");
+      await settleOpenOrders("demo");
+    } catch (err) {
+      logError("execution:settle", err);
+    }
+    try {
+      await maybeSnapshotPortfolio("paper");
+    } catch (err) {
+      logError("portfolio:snapshot", err);
+    }
     // autopilot runs after fresh signals land — exits, breakers, entries
     try {
       const ap = await measure("autopilot.tick", () => autopilotTick());
@@ -247,7 +262,8 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
         publishFeed("scanner_tick", `Autopilot tick: ${ap.entries} entr${ap.entries === 1 ? "y" : "ies"}, ${ap.exits} exit(s)`, {});
       }
     } catch (err) {
-      console.error("[polyquant] autopilot tick failed:", err);
+      logError("autopilot:tick", err);
+      console.error("[eventquant] autopilot tick failed:", err);
     }
     s.cycles += 1;
     recordLatency("scan.tick_total", performance.now() - tickStart);
@@ -283,9 +299,10 @@ export function ensureBackgroundScanner(): void {
   const s = state();
   if (s.timer) return;
   s.timer = setInterval(() => {
-    scanOnce(false).catch((err) =>
-      console.error("[polyquant] scan tick failed:", err),
-    );
+    scanOnce(false).catch((err) => {
+      logError("scanner:tick", err);
+      console.error("[eventquant] scan tick failed:", err);
+    });
   }, 30_000);
   // do not keep the process alive just for the scanner
   if (typeof s.timer === "object" && "unref" in s.timer) s.timer.unref();

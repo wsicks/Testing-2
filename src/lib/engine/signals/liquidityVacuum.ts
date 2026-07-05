@@ -14,7 +14,11 @@ import { buildSignal, check, ramp } from "./helpers";
 export function usdToMove(levels: BookLevel[], best: number, move: number, side: "up" | "down"): number {
   let usd = 0;
   for (const lvl of levels) {
-    const past = side === "up" ? lvl.price > best + move : lvl.price < best - move;
+    // the level AT best±move is the DESTINATION touch — clearing everything
+    // before it already moves the touch there, so it must not be summed
+    // (epsilon guards float noise in best+move)
+    const past =
+      side === "up" ? lvl.price >= best + move - 1e-9 : lvl.price <= best - move + 1e-9;
     if (past) break;
     usd += lvl.price * lvl.size;
   }

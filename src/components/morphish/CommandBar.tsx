@@ -12,14 +12,17 @@ import { Num } from "@/components/ui/num";
 import { cn } from "@/lib/utils";
 
 function UtcClock() {
-  const [now, setNow] = useState(() => new Date());
+  // mounted guard: server HTML must not contain a wall-clock reading — it
+  // would mismatch the client's first render on every hydration. The first
+  // interval tick (≤1s) populates the clock; until then it shows "—".
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(t);
   }, []);
   return (
     <Num className="text-2xs font-bold tracking-wider">
-      {now.toISOString().slice(11, 19)} UTC
+      {now ? `${now.toISOString().slice(11, 19)} UTC` : "—"}
     </Num>
   );
 }
@@ -78,10 +81,11 @@ export function CommandBar({ venueScope }: { venueScope: string }) {
         </span>
       </div>
       <div className="ml-auto flex items-center gap-3">
+        {/* labeled by what it measures: REST health probes, not a websocket */}
         <span className="text-3xs uppercase text-ink-faint">
-          ws{" "}
+          api{" "}
           <span className={cn("font-bold", wsUp === undefined ? "text-ink-faint" : wsUp ? "text-pos" : "text-neg")}>
-            {wsUp === undefined ? "—" : wsUp ? "live" : "down"}
+            {wsUp === undefined ? "—" : wsUp ? "up" : "down"}
           </span>
         </span>
         <span className="text-3xs uppercase text-ink-faint">

@@ -308,7 +308,9 @@ export function assessMimic(x: MimicInputs): MimicAssessment {
     blocks.push({ reason: "entry_stale", detail: `wallet entry is ${Math.round(entryAgeMin)}min old (max ${alpha.maxWalletEntryAgeMin}min)` });
   if (entry.exiting || !entry.stillHolding)
     blocks.push({ reason: "wallet_exiting", detail: entry.exiting ? "wallet has started exiting" : "wallet no longer holds this position" });
-  if (x.spread > 0 && remainingEdge > 0 && x.spread > remainingEdge + 1e-9)
+  // zero remaining edge with any spread at all is unharvestable — the gate
+  // must not switch off exactly when the edge has fully drifted away
+  if (x.spread > 0 && x.spread > remainingEdge + 1e-9)
     blocks.push({ reason: "spread_vs_edge", detail: `spread ${(x.spread * 100).toFixed(1)}c wider than remaining edge ${(remainingEdge * 100).toFixed(1)}c` });
   if ((x.entrySideDepthUsd ?? 0) < 5 * Math.min(alpha.testOrderUsd, 25))
     blocks.push({ reason: "liquidity", detail: `entry-side depth $${Math.round(x.entrySideDepthUsd ?? 0)} < 5× test size` });

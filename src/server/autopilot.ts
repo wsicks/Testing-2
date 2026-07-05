@@ -34,6 +34,8 @@ import {
 import { decideEntries } from "@/lib/engine/autopilot/policy";
 import { evaluateExit } from "@/lib/engine/autopilot/exits";
 import { classifyRegime, type Regime } from "@/lib/engine/micro/regime";
+import { strategyHitRates } from "@/lib/alpha/hitRate";
+import { allOutcomes } from "./alpha/outcomes";
 import { audit } from "./audit";
 import { publishFeed } from "./events";
 import {
@@ -140,7 +142,8 @@ export async function armLiveAutopilot(
   if (!gate.allowed) {
     return { ok: false, error: `Live gate closed: ${gate.reasons.join("; ")}` };
   }
-  if (confirmation.trim().toUpperCase() !== ARM_PHRASE) {
+  // "type exactly" means exactly — no case folding on an arming ritual
+  if (confirmation.trim() !== ARM_PHRASE) {
     return { ok: false, error: `Type exactly "${ARM_PHRASE}" to arm` };
   }
   const ttl = Math.min(Math.max(ttlMinutes, 5), 8 * 60); // 5 min – 8 h
@@ -265,10 +268,15 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         s.session.realizedPnlUsd = Number(
           (s.session.realizedPnlUsd + executed.pnlUsd).toFixed(2),
         );
-        // bandit learns only from realized outcomes
-        const bs = await getBandit();
-        updateBandit(bs, pos.strategy, executed.pnlUsd > 0, executed.pnlUsd);
-        await store.setKV(KV_BANDIT, bs);
+        // bandit learns only from REALIZED outcomes — paper exits have a
+        // measured fill PnL; a dispatched live exit's outcome is unknown
+        // (no fill tracking), and recording it as a $0 "loss" would
+        // fabricate negative evidence against promoted strategies
+        if (pos.mode === "paper") {
+          const bs = await getBandit();
+          updateBandit(bs, pos.strategy, executed.pnlUsd > 0, executed.pnlUsd);
+          await store.setKV(KV_BANDIT, bs);
+        }
       }
       if (executed.remaining > 0) {
         stillManaged.push({
@@ -310,6 +318,12 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
       s.session.tradesLastHour = s.entryTs.filter((t) => Date.now() - t < 3_600_000).length;
 
       const exposure = await getExposure(config.mode === "live" ? "live" : "paper");
+      // hit-rate governor input: measured 1h hit rates from the outcome
+      // archive (in-memory read, ≤2000 rows) — the policy blocks entries from
+      // strategies with a proven-bad win rate and boosts proven-good ones
+      const hitRates = new Map(
+        strategyHitRates(await allOutcomes()).map((h) => [h.strategy, h]),
+      );
       const { candidates, skips } = decideEntries({
         signals: recentSignals,
         markets: marketMap,
@@ -324,6 +338,7 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
           notionalUsd: s.session.notionalUsd,
           tradesLastHour: s.session.tradesLastHour,
         },
+        hitRates,
         now: Date.now(),
       });
       // keep skip noise low: record at most 6 distinct skips per tick
@@ -601,13 +616,26 @@ async function executeExit(
       origin: "autopilot",
       isExit: true,
     });
+    let final = intent;
     if (intent.status !== "rejected") {
-      await confirmLiveIntent(intent.id, undefined, { autopilotArmed: true });
+      final = await confirmLiveIntent(intent.id, undefined, { autopilotArmed: true }).catch(() => ({
+        ...intent,
+        status: "rejected" as const,
+        error: "confirm threw",
+      }));
     }
-    record({ kind: "exit", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, side: "SELL", price, size: toSell, orderId: intent.id, reason: `LIVE exit ${reason}: ${detail} (${intent.status})` });
-    publishFeed("autopilot_exit", `[live] exit ${pos.marketQuestion?.slice(0, 45)} — ${reason}`, {});
-    // fills are not tracked for live; treat as dispatched
-    return { closedSize: toSell, remaining: pos.size - toSell, pnlUsd: 0 };
+    const dispatched = final.status === "submitted";
+    record({ kind: dispatched ? "exit" : "skip", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, side: "SELL", price, size: toSell, orderId: intent.id, reason: `LIVE exit ${reason}: ${detail} (${final.status}${final.error ? ` — ${final.error}` : ""})${dispatched ? "" : " — lot stays managed, retrying next tick"}` });
+    publishFeed("autopilot_exit", `[live] exit ${pos.marketQuestion?.slice(0, 45)} — ${reason} (${final.status})`, {
+      severity: dispatched ? "info" : "warn",
+    });
+    // a rejected/failed live exit did NOT close anything: the lot must stay
+    // managed so stops/trails/pre-close flattens keep retrying — silently
+    // dropping a live position from exit management is the worst failure
+    // mode this engine has
+    return dispatched
+      ? { closedSize: toSell, remaining: pos.size - toSell, pnlUsd: 0 }
+      : { closedSize: 0, remaining: pos.size, pnlUsd: 0 };
   }
 
   // paper exit — market order into the book, exit-relaxed risk checks
@@ -668,6 +696,13 @@ export async function registerManagedLot(lot: ManagedPosition): Promise<void> {
     );
     existing.size = total;
     existing.peakPrice = Math.max(existing.peakPrice, lot.peakPrice);
+    // the newest signal's exit plan reflects the freshest measured edge;
+    // openedAt stays at the OLD entry (conservative: time-stop fires earlier)
+    if (lot.exitPlan) {
+      existing.exitPlan = lot.exitPlan;
+      existing.partialDone = false;
+    }
+    existing.endDate = lot.endDate ?? existing.endDate;
   } else {
     managed.push(lot);
   }

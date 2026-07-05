@@ -25,7 +25,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const parsed = intentSchema.safeParse(await req.json());
+  const parsed = intentSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "invalid intent", details: parsed.error.flatten() },

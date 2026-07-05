@@ -235,7 +235,10 @@ export const eclSignal: SignalStrategy = {
     const score = Math.min(100, rawScore);
 
     // ── crippled sizing: min(10% Kelly, 0.25% of account, depth-limited) ───
-    const kellyFraction = (pShadow - entryAsk) / Math.max(0.01, 1 - entryAsk);
+    // Kelly needs the win probability OF THE TOKEN WE BUY: pShadow for the
+    // YES token, 1−pShadow for the NO token (entryAsk is already side-correct)
+    const pWin = direction === "BUY_NO" ? 1 - pShadow : pShadow;
+    const kellyFraction = (pWin - entryAsk) / Math.max(0.01, 1 - entryAsk);
     const suggestedTestUsd = Math.max(
       0,
       Math.min(0.1 * kellyFraction * 10_000, 25, testSizeUsd, (entryDepthUsd ?? 0) / 5),

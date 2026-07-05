@@ -93,9 +93,15 @@ export function StatusBar() {
         )}
       </Item>
       <Item label="risk budget">
-        <Num tone={budgetLeft <= 0 ? "neg" : budgetLeft < dailyBudget * 0.3 ? "warn" : "pos"}>
-          {fmtUsd(budgetLeft)}
-        </Num>
+        {settings ? (
+          <Num tone={budgetLeft <= 0 ? "neg" : budgetLeft < dailyBudget * 0.3 ? "warn" : "pos"}>
+            {fmtUsd(budgetLeft)}
+          </Num>
+        ) : (
+          // settings not loaded yet — a red "$0.00" here would fabricate a
+          // "budget exhausted" alarm on every first paint
+          "—"
+        )}
       </Item>
       <div className="ml-auto flex items-center gap-1">
         {pf?.portfolio.isSample ? <Badge variant="warn">sample data</Badge> : null}

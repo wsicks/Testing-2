@@ -26,13 +26,16 @@ export async function fetchRecentTrades(
     `${DATA_API_URL}/trades` + qs({ market: conditionId, limit }),
     opts,
   );
-  return (raw ?? []).map((t) => ({
-    side: t.side,
-    price: t.price,
-    size: t.size,
-    ts: t.timestamp * 1000,
-    outcome: t.outcome,
-  }));
+  return (raw ?? [])
+    .map((t) => ({
+      side: t.side,
+      price: t.price,
+      size: t.size,
+      ts: t.timestamp * 1000,
+      outcome: t.outcome,
+    }))
+    // a row missing timestamp/price must be dropped, not served as NaN
+    .filter((t) => Number.isFinite(t.ts) && Number.isFinite(t.price) && Number.isFinite(t.size));
 }
 
 export interface UserPositionRaw {

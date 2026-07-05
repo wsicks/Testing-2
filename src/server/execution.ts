@@ -5,6 +5,7 @@
 import type {
   AppSettings,
   LiveOrderIntent,
+  OrderBookData,
   OrderSide,
   OrderType,
   PaperOrder,
@@ -145,6 +146,21 @@ export async function placePaperOrder(body: PlaceOrderBody): Promise<PlaceOrderR
     evaluateTrade({ proposal, portfolio, settings, market, book }),
   );
 
+  // stale exposure BLOCKS new entries (exits stay possible — risk-reducing):
+  // the flag alone was informational; nothing enforced it, so a 10-minute
+  // store outage meant orders kept passing risk checks against frozen cash
+  if (exposure.stale && !body.isExit) {
+    assessment.approved = false;
+    const reason = `BLOCKED — exposure_stale: portfolio state is ${Math.round(exposure.ageMs / 1000)}s old (max ${settings.staleDataMaxSecs}s) and refresh is failing — entries blocked until exposure is current`;
+    assessment.reasons.unshift(reason);
+    assessment.checks.unshift({
+      name: "exposure_fresh",
+      passed: false,
+      detail: reason,
+      severity: "block",
+    });
+  }
+
   // per-venue paper-trading gate — venue flags never leak across venues
   const venue = venueForToken(body.tokenId);
   const venueCfg = settings.venues[venue as Exclude<VenueId, "coingecko">];
@@ -255,7 +271,15 @@ async function settleOpenOrdersUnsafe(mode: "paper" | "demo"): Promise<number> {
   const open = await store.listOrders(mode, ["open", "partially_filled"]);
   let touched = 0;
   for (const o of open) {
-    const book = await getBook(o.tokenId);
+    // one unreachable book (delisted market, venue outage) must not abort
+    // settlement of every other order — and must never abort the scan tick
+    // that runs the autopilot exit sweep after us
+    let book: OrderBookData;
+    try {
+      book = await getBook(o.tokenId);
+    } catch {
+      continue; // fail closed: the order rests until its book is reachable
+    }
     const { order: next, fills } = matchOrder(o, book, settings.feeRateBps);
     if (next.status === o.status && fills.length === 0) continue;
     touched += 1;
@@ -360,6 +384,14 @@ export async function createLiveIntent(body: PlaceOrderBody): Promise<{
   const assessment = measureSync("hot.risk_check", () =>
     evaluateTrade({ proposal, portfolio: exposure.state, settings, market, book }),
   );
+  // stale-exposure enforcement (live entries): the refresh above may have
+  // FAILED and served last-good state — that is never a basis for new risk
+  if (exposure.stale && !body.isExit) {
+    assessment.approved = false;
+    const reason = `BLOCKED — exposure_stale: live exposure state is ${Math.round(exposure.ageMs / 1000)}s old and refresh is failing`;
+    assessment.reasons.unshift(reason);
+    assessment.checks.unshift({ name: "exposure_fresh", passed: false, detail: reason, severity: "block" });
+  }
 
   const now = Date.now();
   const needsTyped =
@@ -424,6 +456,22 @@ export async function confirmLiveIntent(
   if (intent.status !== "previewed" && intent.status !== "approval_required") {
     throw new Error(`Intent is ${intent.status} — cannot confirm`);
   }
+  // a preview is a snapshot of a market that has since moved on — it must
+  // not be confirmable days later against a stale price/risk assessment
+  if (intent.expiresAt !== undefined && Date.now() > intent.expiresAt) {
+    const next: LiveOrderIntent = {
+      ...intent,
+      status: "expired",
+      error: "intent expired before confirmation — re-preview to get a fresh risk assessment",
+      updatedAt: Date.now(),
+    };
+    await store.updateIntent(next);
+    await audit("risk", "live_intent_expired", `LIVE intent ${id} expired before confirmation`, {
+      severity: "warn",
+      feedType: "risk_check_failed",
+    });
+    return next;
+  }
   const gate = liveGate(settings, venueForToken(intent.tokenId));
   if (!gate.allowed) {
     const next: LiveOrderIntent = {
@@ -444,7 +492,9 @@ export async function confirmLiveIntent(
   if (
     !opts.autopilotArmed &&
     needsTyped &&
-    confirmationText?.trim().toUpperCase() !== "CONFIRM"
+    // "type CONFIRM" means exactly that — a ritual that autocorrects case
+    // is not the ritual that was promised
+    confirmationText?.trim() !== "CONFIRM"
   ) {
     throw new Error(
       `This order is above $${settings.typedConfirmThresholdUsd} — type CONFIRM to approve it`,

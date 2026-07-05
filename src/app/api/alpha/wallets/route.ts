@@ -18,7 +18,10 @@ export async function GET() {
   ensureBackgroundScanner();
   const wallets = await listWallets();
   return NextResponse.json({
-    wallets: wallets.sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0)),
+    // copy before sorting: on the memory store this array IS persisted state,
+    // and reordering it in place would let the repo's tail-cap evict the
+    // best-scored wallets instead of the stalest
+    wallets: [...wallets].sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0)),
     intel: walletIntelInfo(),
   });
 }
@@ -38,7 +41,7 @@ const actionSchema = z.discriminatedUnion("action", [
 ]);
 
 export async function POST(req: NextRequest) {
-  const parsed = actionSchema.safeParse(await req.json());
+  const parsed = actionSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid action", details: parsed.error.flatten() }, { status: 400 });
   }
@@ -56,7 +59,15 @@ export async function POST(req: NextRequest) {
     case "intel":
       return NextResponse.json({ markets: await refreshWalletIntel() });
     case "track": {
-      const { record } = await scoreWallet(body.wallet.toLowerCase(), { manuallyAdded: true });
+      // pass the existing record through so re-tracking a known wallet
+      // preserves its accumulated forward evidence and firstSeen
+      const existing = (await listWallets()).find(
+        (x) => x.walletId === body.wallet.toLowerCase(),
+      );
+      const { record } = await scoreWallet(body.wallet.toLowerCase(), {
+        manuallyAdded: true,
+        existing,
+      });
       await upsertWallet(record);
       await audit("user", "wallet_tracked", `Manually tracking public wallet ${body.wallet}`, {});
       return NextResponse.json({ wallet: record });

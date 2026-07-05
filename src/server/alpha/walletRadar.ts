@@ -124,7 +124,6 @@ export async function scoreWallet(
   const now = Date.now();
   const positions = await fetchWalletPositions(walletId);
   const trades = (await fetchWalletTrades(walletId, 200)).map(toTradeLite);
-  await saveWalletTrades(walletId, [...trades].reverse()); // store oldest→newest
 
   const openTsByCondition = new Map<string, number>();
   for (const t of trades) {
@@ -240,6 +239,12 @@ export async function scoreWallet(
     lastScoredAt: now,
     lastIntelAt: opts.existing?.lastIntelAt,
   };
+  // persist the trade tape only for wallets we actually keep — rejected
+  // discovery candidates would otherwise leave one orphaned KV blob each,
+  // growing key count forever under the 300-wallet list cap
+  if (!rejected || opts.manuallyAdded || opts.existing) {
+    await saveWalletTrades(walletId, [...trades].reverse()); // store oldest→newest
+  }
   return { record, rejected: rejected ?? undefined };
 }
 
@@ -425,9 +430,10 @@ export async function recordWalletForward(
 
 /** re-score all tracked wallets (daily) — refreshes labels and skill tables */
 export async function rescoreTrackedWallets(max = 25): Promise<number> {
-  const wallets = (await listWallets()).filter(
-    (w) => w.status === "tracked" || w.manuallyAdded,
-  );
+  // status "tracked" ONLY: a manually-added wallet the human ARCHIVED must
+  // stay archived — scoreWallet would rewrite it to "tracked" and silently
+  // revert a human decision
+  const wallets = (await listWallets()).filter((w) => w.status === "tracked");
   let n = 0;
   for (const w of wallets.slice(0, max)) {
     try {

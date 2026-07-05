@@ -20,6 +20,9 @@ export const dislocationSignal: SignalStrategy = {
 
   run(ctx: SignalContext): SignalResult | null {
     const { market, history, settings, now } = ctx;
+    // Kalman fair value in probability space — asset (spot) rows would turn
+    // dollar prices into fabricated "win probabilities"
+    if (market.outcomeType !== "binary") return null;
     if (!history || history.length < 12) return null;
     const kf = kalmanFilter(history);
     if (!kf) return null;

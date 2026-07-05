@@ -29,7 +29,9 @@ const INTERVAL_MS = Number(process.env.WORKER_INTERVAL_MS ?? 30_000);
 
 async function loop() {
   try {
-    const summary = await scanOnce(true);
+    // force=false: the worker must respect the user's scannersEnabled toggle
+    // (incl. the kill switch's side effect) — force would bypass it
+    const summary = await scanOnce(false);
     console.log(
       `[worker] scanned=${summary.scanned} books=${summary.booksFetched} signals=${summary.signalsCreated} rejected=${summary.signalsRejected}`,
     );

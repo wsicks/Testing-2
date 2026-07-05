@@ -35,17 +35,21 @@ export function parseCryptoThreshold(
   const threshold = parseUsdAmount(title);
   if (threshold === null || threshold <= 0) return null;
 
-  // direction words; ranges/ambiguous phrasing → not parseable
+  // direction words; ranges/ambiguous phrasing → not parseable. Past-tense
+  // inflections ("reached", "fell under", "dropped below") must parse the
+  // same as present tense — a tense change never changes the contract.
   const above = /\b(above|over|exceed(s|ed)?|greater than|higher than|reach(es|ed)?|hits?|at least)\b/i.test(title);
-  const below = /\b(below|under|less than|lower than|dips?|falls? under|drops? below)\b/i.test(title);
+  const below = /\b(below|under|less than|lower than|dip(s|ped)?|(fall(s|en)?|fell) under|drop(s|ped)? below)\b/i.test(title);
   if (above === below) return null; // both or neither → ambiguous
 
   // touch vs terminal: "reach/hit/dip/drop/fall" settle on the period extreme
   // (any trade through the level before close); "above/below on <date>" settle
   // on the closing value. They are different contracts with different fair
-  // values, so the kind is part of the parsed structure.
+  // values, so the kind is part of the parsed structure. CRITICAL: every
+  // inflection accepted by the direction regexes above must be accepted here
+  // too, or a past-tense touch title silently becomes a terminal contract.
   const touch =
-    /\b(reach(es)?|hits?|touch(es)?|dips?|drops?|falls?)\b/i.test(title) ||
+    /\b(reach(es|ed)?|hits?|touch(es|ed)?|dip(s|ped)?|drop(s|ped)?|fall(s|en)?|fell)\b/i.test(title) ||
     /\bat any (point|time)\b/i.test(title);
 
   // sanity: threshold must be plausibly a price for the asset (rejects

@@ -140,10 +140,11 @@ export function isMockToken(tokenId: string): boolean {
 }
 
 /**
- * Order book routed to the owning venue by token prefix. Kalshi/Coinbase
- * errors propagate (fail closed — a trade without a book gets blocked by the
- * risk engine); only Polymarket falls back to a labeled MOCK book so demo
- * mode survives offline.
+ * Order book routed to the owning venue by token prefix. ALL venues fail
+ * CLOSED on real tokens: a book fetch error propagates, and the risk engine
+ * blocks the trade on "spread unavailable". Fabricated books are only ever
+ * served for mock (demo) tokens — matching orders or risk-checking intents
+ * against invented depth would be fabricated numbers in the money path.
  */
 export async function getBook(
   tokenId: string,
@@ -164,10 +165,10 @@ export async function getBook(
       await audit(
         "system",
         "api_error",
-        `CLOB book fetch failed for ${tokenId.slice(0, 12)}… — serving MOCK book (${err instanceof Error ? err.message : "unknown"})`,
+        `CLOB book fetch failed for ${tokenId.slice(0, 12)}… — failing CLOSED, no book served (${err instanceof Error ? err.message : "unknown"})`,
         { severity: "warn", feedType: "api_error" },
       );
-      return mockOrderBook(tokenId, fallbackMid);
+      throw err;
     }
   });
 }
@@ -222,7 +223,9 @@ export async function getHistory(
     try {
       return await fetchPriceHistory(tokenId, { interval, fidelity });
     } catch {
-      return mockPriceHistory(tokenId);
+      // no data is honest; a seeded random walk masquerading as a real
+      // market's price history is not (it would flow into backtests/charts)
+      return [];
     }
   });
 }

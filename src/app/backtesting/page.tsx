@@ -138,7 +138,8 @@ export default function BacktestingPage() {
               <Stat label="win rate" v={`${result.stats.winRate}%`} />
               <Stat label="avg win" v={fmtUsd(result.stats.avgWin)} tone={1} />
               <Stat label="avg loss" v={fmtUsd(result.stats.avgLoss)} tone={-1} />
-              <Stat label="profit factor" v={String(result.stats.profitFactor)} />
+              {/* Infinity (no losing trades) JSON-serializes to null — render ∞ */}
+              <Stat label="profit factor" v={Number.isFinite(result.stats.profitFactor) ? String(result.stats.profitFactor) : "∞ (no losses)"} />
               <Stat label="fees paid" v={fmtUsd(result.stats.feesPaid)} />
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-3">

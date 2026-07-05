@@ -20,6 +20,18 @@ import type {
 import { regimeAllows, type Regime } from "../micro/regime";
 import { shrunkKelly } from "../risk/kelly";
 import { genId } from "@/lib/utils";
+import type { StrategyHitRate } from "@/lib/alpha/hitRate";
+
+// ── Hit-rate governor ────────────────────────────────────────────────────────
+// Entries are only taken from strategies whose MEASURED 1h hit rate holds up.
+// Below the sample floor a strategy is unproven and may still explore (the
+// bandit handles that); at/above it, a hit rate under the cutoff blocks
+// entries until the strategy re-proves itself in shadow measurement. The
+// ranking boost uses the Wilson lower bound, so small hot streaks never
+// outrank a strategy with a genuinely proven win rate.
+
+export const GOVERNOR_MIN_SAMPLES = 20;
+export const GOVERNOR_MIN_HIT_RATE = 0.45;
 
 export interface EntryCandidate {
   proposal: TradeProposal;
@@ -38,6 +50,8 @@ export interface PolicyInput {
   bandit: BanditArm[];
   managed: ManagedPosition[];
   session: { trades: number; notionalUsd: number; tradesLastHour: number };
+  /** measured per-strategy hit rates from the outcome archive */
+  hitRates?: Map<string, StrategyHitRate>;
   now: number;
 }
 
@@ -93,6 +107,16 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
     }
     if (sig.expiresAt && now > sig.expiresAt) {
       skips.push(skip("signal expired before evaluation", sig));
+      continue;
+    }
+    const hr = input.hitRates?.get(sig.strategy);
+    if (hr && hr.n >= GOVERNOR_MIN_SAMPLES && hr.hitRate < GOVERNOR_MIN_HIT_RATE) {
+      skips.push(
+        skip(
+          `hit-rate governor: measured 1h hit rate ${(hr.hitRate * 100).toFixed(0)}% over ${hr.n} outcomes is below ${(GOVERNOR_MIN_HIT_RATE * 100).toFixed(0)}% — entries blocked until shadow measurement re-proves this strategy`,
+          sig,
+        ),
+      );
       continue;
     }
     if (!sig.conditionId || heldConditions.has(sig.conditionId)) {
@@ -161,10 +185,15 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
     const size = Math.max(1, Math.floor(notional / price));
 
     const sampled = arm?.sampled ?? 0.5;
+    // proven strategies float up the ranking by their Wilson floor; unproven
+    // ones get a neutral 0.75 so exploration survives without outranking
+    // anything with a demonstrated win rate above ~50%
+    const provenBoost =
+      hr && hr.n >= GOVERNOR_MIN_SAMPLES ? 0.5 + hr.wilsonLo : 0.75;
     candidates.push({
       strategy: sig.strategy,
       signal: sig,
-      rank: sampled * (sig.score / 100),
+      rank: sampled * (sig.score / 100) * provenBoost,
       proposal: {
         conditionId: sig.conditionId,
         tokenId,
@@ -197,5 +226,26 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
     return true;
   });
 
-  return { candidates: unique.slice(0, Math.max(0, room)), skips };
+  // enforce the session notional budget across THIS TICK's accepted set —
+  // the per-candidate check above compares against the static pre-tick
+  // figure, which would let N candidates each "fit" into the same last
+  // dollar and overshoot by (maxOpenPositions−1) × perTradeUsd
+  let projected = session.notionalUsd;
+  const accepted: EntryCandidate[] = [];
+  for (const c of unique.slice(0, Math.max(0, room))) {
+    const notional = c.proposal.price * c.proposal.size;
+    if (projected + notional > config.maxSessionNotionalUsd) {
+      skips.push(
+        skip(
+          `session notional budget exhausted within tick ($${projected.toFixed(0)} + $${notional.toFixed(0)} > $${config.maxSessionNotionalUsd})`,
+          c.signal,
+        ),
+      );
+      continue;
+    }
+    projected += notional;
+    accepted.push(c);
+  }
+
+  return { candidates: accepted, skips };
 }

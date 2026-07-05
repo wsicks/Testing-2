@@ -202,7 +202,12 @@ export async function refreshDisclosures(): Promise<number> {
   }
 
   if (fresh.length) {
-    await saveDisclosures([...existing, ...fresh]);
+    // re-read before write-back: the sweep above spans many seconds of
+    // network I/O and a concurrent writer (attention spikes, a second sweep)
+    // must not be erased by this call's pre-sweep snapshot
+    const latest = await listDisclosures();
+    const latestIds = new Set(latest.map((d) => d.id));
+    await saveDisclosures([...latest, ...fresh.filter((d) => !latestIds.has(d.id))]);
     await audit(
       "scanner",
       "disclosures_refreshed",

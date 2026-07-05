@@ -42,8 +42,9 @@ export function StatusStrip() {
       <span>clob <Num className="text-ink">{cell(p?.hists, "upstream.clob")}</Num></span>
       <span>kalshi <Num className="text-ink">{cell(p?.hists, "upstream.kalshi")}</Num></span>
       <span>cache hit <Num className="text-ink">{p?.cacheHitRate !== undefined ? `${(p.cacheHitRate * 100).toFixed(0)}%` : "—"}</Num></span>
-      <span>audit queue <Num className="text-ink">{p?.counters?.["audit.queued"] ?? 0}</Num></span>
-      <span>stale mkts <Num className={cn("text-ink", (sum?.scan.ageMs ?? 0) > 60_000 && "text-warn")}>{(sum?.scan.ageMs ?? 0) > 60_000 ? "registry stale" : "ok"}</Num></span>
+      {/* unmeasured is "—", never a fabricated healthy zero/ok */}
+      <span>audit queue <Num className="text-ink">{p ? (p.counters?.["audit.queued"] ?? 0) : "—"}</Num></span>
+      <span>stale mkts <Num className={cn("text-ink", (sum?.scan.ageMs ?? 0) > 60_000 && "text-warn")}>{sum ? (sum.scan.ageMs > 60_000 ? "registry stale" : "ok") : "—"}</Num></span>
       <span className="ml-auto">eventquant morphish · build {process.env.NEXT_PUBLIC_BUILD ?? "dev"}</span>
     </div>
   );

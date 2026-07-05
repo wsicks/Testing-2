@@ -15,6 +15,18 @@ export async function GET(req: NextRequest) {
   if (!market || !RES_SET.has(res) || !Number.isFinite(from) || !Number.isFinite(to)) {
     return NextResponse.json({ error: "market, res∈{1,5,15,30,60,240,1440}, from, to required" }, { status: 400 });
   }
-  const candles = await getCandles(market, res, from, to);
-  return NextResponse.json({ candles });
+  // clamp the span to what one upstream request can honestly serve (~300
+  // bars): from=0 would exceed Coinbase's per-request candle limit, 500 the
+  // route, and mark the source degraded from pure user input
+  const maxSpanSec = 300 * res * 60;
+  const clampedFrom = Math.max(from, to - maxSpanSec);
+  try {
+    const candles = await getCandles(market, res, clampedFrom, to);
+    return NextResponse.json({ candles, clampedFrom: clampedFrom !== from ? clampedFrom : undefined });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "candles unavailable" },
+      { status: 502 },
+    );
+  }
 }

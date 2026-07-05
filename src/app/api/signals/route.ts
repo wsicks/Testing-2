@@ -12,7 +12,8 @@ export async function GET(req: NextRequest) {
     strategy: sp.get("strategy") ?? undefined,
     status: sp.get("status") ?? undefined,
     conditionId: sp.get("conditionId") ?? undefined,
-    limit: Number(sp.get("limit") ?? 100),
+    // NaN-safe: ?limit=abc must not become slice(0, NaN) / prisma take:NaN
+    limit: Math.min(1_000, Math.max(1, Math.floor(Number(sp.get("limit")) || 100))),
   });
   return NextResponse.json({ signals });
 }

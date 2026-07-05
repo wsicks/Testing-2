@@ -29,9 +29,11 @@ export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
   const finals: number[] = [];
   const maxDds: number[] = [];
   let ruined = 0;
-  // store every path's equity at checkpoints to build percentile bands
+  // store every path's equity at checkpoints to build percentile bands.
+  // ceil, not floor: floor(100/60)=1 would cap the band at trade 60 and
+  // silently drop the last 40% of the horizon from the fan chart
   const checkpoints = Math.min(numTrades, 60);
-  const step = Math.max(1, Math.floor(numTrades / checkpoints));
+  const step = Math.max(1, Math.ceil(numTrades / checkpoints));
   const bandSamples: number[][] = Array.from({ length: checkpoints + 1 }, () => []);
 
   for (let path = 0; path < numPaths; path++) {
@@ -65,17 +67,21 @@ export function runMonteCarlo(config: MonteCarloConfig): MonteCarloResult {
   finals.sort((a, b) => a - b);
   maxDds.sort((a, b) => a - b);
 
-  const paths = bandSamples.map((samples, i) => {
-    const s = [...samples].sort((a, b) => a - b);
-    return {
-      t: i * step,
-      p5: percentile(s, 5),
-      p25: percentile(s, 25),
-      p50: percentile(s, 50),
-      p75: percentile(s, 75),
-      p95: percentile(s, 95),
-    };
-  });
+  const paths = bandSamples
+    // with step=ceil the tail checkpoint slots can be unused — an empty
+    // slot must be dropped, not rendered as a NaN band point
+    .filter((samples) => samples.length > 0)
+    .map((samples, i) => {
+      const s = [...samples].sort((a, b) => a - b);
+      return {
+        t: Math.min(numTrades, i * step),
+        p5: percentile(s, 5),
+        p25: percentile(s, 25),
+        p50: percentile(s, 50),
+        p75: percentile(s, 75),
+        p95: percentile(s, 95),
+      };
+    });
 
   // histogram of final returns
   const lo = finals[0] ?? 0;

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const parsed = placeSchema.safeParse(await req.json());
+  const parsed = placeSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "invalid order", details: parsed.error.flatten() },

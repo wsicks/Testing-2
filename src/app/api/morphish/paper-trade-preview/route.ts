@@ -19,7 +19,7 @@ const schema = z.object({
 
 /** PAPER preview — full risk engine, nothing placed */
 export async function POST(req: NextRequest) {
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid preview", details: parsed.error.flatten() }, { status: 400 });
   }

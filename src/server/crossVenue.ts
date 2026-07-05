@@ -8,6 +8,7 @@ import type { CrossVenueLink, ReferencePrice } from "@/lib/types";
 import { cached } from "./cache";
 import { getMarkets } from "./marketData";
 import { measureSync } from "./perf";
+import { getStore } from "./store";
 
 export async function getCrossVenueLinks(): Promise<CrossVenueLink[]> {
   return cached("crossvenue:links", 60_000, async () => {
@@ -17,6 +18,11 @@ export async function getCrossVenueLinks(): Promise<CrossVenueLink[]> {
 }
 
 export async function getReferencePrices(): Promise<ReferencePrice[]> {
+  // per-venue enablement applies to reference sources too — a disabled
+  // CoinGecko must not keep being fetched just because the data is cheap
+  const store = await getStore();
+  const settings = await store.getSettings();
+  if (!settings.venues.coingecko.publicData) return [];
   return cached("reference:coingecko", 60_000, async () => {
     try {
       return await fetchCoinGeckoPrices();

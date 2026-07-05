@@ -178,7 +178,7 @@ describe("closing-soon scanner", () => {
 });
 
 describe("registry", () => {
-  it("registers all seventeen strategies", () => {
+  it("registers all eighteen strategies", () => {
     expect(STRATEGIES.map((s) => s.id)).toEqual([
       "liquidity_spread",
       "price_movement",
@@ -197,6 +197,7 @@ describe("registry", () => {
       "liquidity_vacuum",
       "flow_toxicity",
       "phantom_depth",
+      "favorite_convergence",
     ]);
   });
 
@@ -213,5 +214,42 @@ describe("registry", () => {
       expect(s.checks.length).toBeGreaterThan(0);
       expect(s.summary.length).toBeGreaterThan(0);
     }
+  });
+
+  it("NO strategy ever emits a directional proposal on an asset (spot) row", () => {
+    // a Coinbase spot row: dollar prices, huge "volume", looks binary-ish to
+    // ungated math (DOGE at $0.20 passes every 0–1 boundary check)
+    const asset = makeMarket({
+      conditionId: "cb:DOGE-USD",
+      venueId: "coinbase",
+      outcomeType: "asset",
+      midpoint: 0.2,
+      yesPrice: 0.2,
+      bestBid: 0.199,
+      bestAsk: 0.201,
+      spread: 0.002,
+      oneDayPriceChange: 0.09,
+      volume24h: 500_000_000,
+      liquidity: 500_000_000,
+    });
+    const out = runAllStrategies({
+      market: asset,
+      book: makeBook({ bestBid: 0.199, bestAsk: 0.201, midpoint: 0.2, spread: 0.002 }),
+      history: Array.from({ length: 30 }, (_, i) => ({ t: now / 1000 - (30 - i) * 3600, p: 0.2 + Math.sin(i) * 0.02 })),
+      trades: [{ side: "BUY", price: 0.2, size: 1000, ts: now - 60_000 }],
+      settings,
+      now,
+    });
+    expect(out.filter((s) => s.direction !== "NEUTRAL")).toHaveLength(0);
+  });
+
+  it("reports strategy crashes to the caller instead of swallowing them", () => {
+    const seen: string[] = [];
+    runAllStrategies(
+      // market: undefined explodes inside every strategy immediately
+      { market: undefined as unknown as ReturnType<typeof makeMarket>, settings, now },
+      (id) => seen.push(id),
+    );
+    expect(seen.length).toBeGreaterThan(0);
   });
 });

@@ -21,7 +21,7 @@ const previewSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const parsed = previewSchema.safeParse(await req.json());
+  const parsed = previewSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "invalid preview request", details: parsed.error.flatten() },

@@ -40,19 +40,20 @@ function EclCard({ s }: { s: SignalResult }) {
         <span className="label">ecl</span>
         <span className="text-3xs text-ink-faint">{fmtAgo(s.createdAt)}</span>
       </div>
+      {/* a missing meta value renders "—", never a measured-looking zero */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 p-2 text-2xs sm:grid-cols-4 lg:grid-cols-7">
-        <Field k="P market" v={`${((n(m.pMarket) ?? 0) * 100).toFixed(1)}%`} />
-        <Field k="P shadow" v={`${((n(m.pShadow) ?? 0) * 100).toFixed(1)}%`} pos />
-        <Field k="entropy gap" v={`${(n(m.entropyGap) ?? 0).toFixed(3)} nats`} />
-        <Field k="source lag" v={(n(m.sourceLag) ?? 0).toFixed(2)} />
-        <Field k="rule clarity" v={(n(m.ruleClarity) ?? 0).toFixed(2)} />
+        <Field k="P market" v={n(m.pMarket) !== undefined ? `${(n(m.pMarket)! * 100).toFixed(1)}%` : "—"} />
+        <Field k="P shadow" v={n(m.pShadow) !== undefined ? `${(n(m.pShadow)! * 100).toFixed(1)}%` : "—"} pos />
+        <Field k="entropy gap" v={n(m.entropyGap) !== undefined ? `${n(m.entropyGap)!.toFixed(3)} nats` : "—"} />
+        <Field k="source lag" v={n(m.sourceLag)?.toFixed(2) ?? "—"} />
+        <Field k="rule clarity" v={n(m.ruleClarity)?.toFixed(2) ?? "—"} />
         <Field k="spread" v={fmtCents(n(m.spread))} />
         <Field k="friction" v={fmtCents(n(m.friction))} />
         <Field k="edge after cost" v={fmtCents(n(m.edgeAfterCost))} pos />
         <Field k="source" v={String(m.shadowSource ?? "—")} />
-        <Field k="source age" v={`${((n(m.sourceAgeMs) ?? 0) / 1000).toFixed(1)}s`} />
-        <Field k="liquidity score" v={(n(m.liquidityScore) ?? 0).toFixed(2)} />
-        <Field k="max test size" v={`$${(n(m.suggestedTestUsd) ?? 0).toFixed(2)}`} warn />
+        <Field k="source age" v={n(m.sourceAgeMs) !== undefined ? `${(n(m.sourceAgeMs)! / 1000).toFixed(1)}s` : "—"} />
+        <Field k="liquidity score" v={n(m.liquidityScore)?.toFixed(2) ?? "—"} />
+        <Field k="max test size" v={n(m.suggestedTestUsd) !== undefined ? `$${n(m.suggestedTestUsd)!.toFixed(2)}` : "—"} warn />
         {exit ? (
           <>
             <Field k="exit 50% at" v={fmtCents(exit.partialExitAt)} />

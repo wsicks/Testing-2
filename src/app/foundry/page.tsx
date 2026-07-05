@@ -7,6 +7,7 @@
 // prosecutor passes.
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useDisclosures,
   useFoundry,
@@ -63,9 +64,9 @@ function FeatureCard({ f, pnl }: { f: FeatureRow; pnl?: PaperPnl[string] }) {
         <Num>{f.evidence.outcomes}</Num>
         {pnl && (pnl.wins + pnl.losses > 0) ? (
           <>
-            <span className="label" title="realized paper PnL from AUTOPILOT-managed trades only">ap pnl</span>
+            <span className="label" title="realized paper PnL from AUTOPILOT-managed trades only">paper pnl</span>
             <Num tone={pnl.realizedUsd}>${pnl.realizedUsd.toFixed(2)}</Num>
-            <span className="text-3xs text-ink-faint">{pnl.wins}W/{pnl.losses}L</span>
+            <span className="text-3xs text-ink-faint">{pnl.wins}W/{pnl.losses}L · simulated</span>
           </>
         ) : null}
       </button>
@@ -154,7 +155,9 @@ function FeatureCard({ f, pnl }: { f: FeatureRow; pnl?: PaperPnl[string] }) {
             <Button size="xs" onClick={() => act.mutate({ action: "prosecute", featureId: f.id })} disabled={act.isPending}>
               run prosecutor
             </Button>
-            {f.status !== "promoted" && verdict?.passed ? (
+            {/* graveyard is terminal from this door — no approve button on
+                retired/rejected features (server enforces the same) */}
+            {f.status !== "promoted" && f.status !== "retired" && f.status !== "rejected" && verdict?.passed ? (
               <Button
                 size="xs"
                 variant="primary"
@@ -182,6 +185,7 @@ export default function FoundryPage() {
   const { data, isLoading } = useFoundry();
   const { data: disc } = useDisclosures();
   const act = useFoundryAction();
+  const qc = useQueryClient();
   const features = data?.features ?? [];
   const byStatus = (s: string) => features.filter((f) => f.status === s).length;
   const best = [...features]
@@ -332,6 +336,94 @@ export default function FoundryPage() {
             <p className="pt-0.5 text-3xs text-ink-faint">{data?.driftProfile.note}</p>
           </div>
         </div>
+      </Panel>
+
+      <Panel title="measured win rates — what the governor gates on">
+        {!data?.hitRates.length ? (
+          <EmptyNote>
+            no 1h outcomes captured yet — win rates appear as the outcome
+            tracker fills (they are measured, never assumed)
+          </EmptyNote>
+        ) : (
+          <table className="w-full text-2xs">
+            <thead>
+              <tr className="border-b border-line-strong text-left">
+                {["strategy", "n", "hit rate", "wilson floor", "net hit rate", "avg 1h drift", "governor"].map((h) => (
+                  <th key={h} className="cell label">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.hitRates.map((h) => {
+                const proven = h.n >= 20;
+                const blocked = proven && h.hitRate < 0.45;
+                return (
+                  <tr key={h.strategy} className="border-b border-line/60">
+                    <td className="cell font-semibold">{h.strategy}</td>
+                    <td className="cell"><Num>{h.n}</Num></td>
+                    <td className="cell"><Num tone={h.hitRate >= 0.5 ? "pos" : "neg"}>{(h.hitRate * 100).toFixed(0)}%</Num></td>
+                    <td className="cell"><Num className="text-ink-faint">{proven ? `${(h.wilsonLo * 100).toFixed(0)}%` : "—"}</Num></td>
+                    <td className="cell"><Num tone={h.netHitRate >= 0.5 ? "pos" : undefined}>{(h.netHitRate * 100).toFixed(0)}%</Num></td>
+                    <td className="cell"><Num tone={h.avgDrift1h}>{(h.avgDrift1h * 100).toFixed(2)}c</Num></td>
+                    <td className="cell">
+                      {blocked ? (
+                        <Badge variant="neg">entries blocked</Badge>
+                      ) : proven ? (
+                        <Badge variant="pos">eligible</Badge>
+                      ) : (
+                        <span className="text-3xs text-ink-faint">unproven (n&lt;20)</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <p className="pt-0.5 text-3xs text-ink-faint">
+          hit rate = share of captured 1h drifts &gt; 0; net clears each
+          signal&apos;s own friction (half-spread + 50bps). The Wilson floor is
+          the 95% lower bound — the win rate the sample has actually PROVEN.
+          The autopilot blocks entries from strategies measuring &lt;45% over
+          n≥20 and ranks proven strategies by their floor.
+        </p>
+      </Panel>
+
+      <Panel title={`runtime errors (${data?.runtimeErrors.filter((e) => !e.resolved).length ?? 0} open)`}>
+        {!data?.runtimeErrors.length ? (
+          <EmptyNote>
+            no runtime errors captured — scanner/foundry/autopilot/strategy
+            failures are deduped here and triaged into ERRORLOG.md in the repo
+          </EmptyNote>
+        ) : (
+          <div className="space-y-1">
+            {data.runtimeErrors.slice(0, 12).map((e) => (
+              <div key={e.id} className="flex items-start gap-2 border-b border-line/60 pb-1 text-2xs">
+                <Badge variant={e.resolved ? "default" : "neg"}>{e.resolved ? "resolved" : `×${e.count}`}</Badge>
+                <span className="w-40 shrink-0 font-semibold">{e.source}</span>
+                <span className="min-w-0 flex-1 text-ink-soft">
+                  {e.message}
+                  {e.detail ? <span className="text-ink-faint"> — {e.detail}</span> : null}
+                </span>
+                <span className="shrink-0 text-3xs text-ink-faint">{fmtAgo(e.lastAt)}</span>
+                {!e.resolved ? (
+                  <Button
+                    size="xs"
+                    onClick={() =>
+                      fetch("/api/errors", {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ action: "resolve", id: e.id }),
+                      }).then(() => qc.invalidateQueries({ queryKey: ["alpha"] }))
+                    }
+                  >
+                    resolve
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
       </Panel>
 
       <Panel title={`research agent — ideas (${data?.ideas.length ?? 0})`}>

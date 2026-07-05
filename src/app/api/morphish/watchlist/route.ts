@@ -10,7 +10,7 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const parsed = schema.safeParse(await req.json());
+  const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "invalid" }, { status: 400 });
   const store = await getStore();
   const settings = await store.getSettings();

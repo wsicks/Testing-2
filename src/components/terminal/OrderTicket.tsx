@@ -208,24 +208,32 @@ export function OrderTicket({
     }
   };
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const submit = async () => {
     if (!state.assessment) return;
-    if (mode === "live") {
-      const res = await createIntent.mutateAsync(body);
-      update({ intent: res.intent });
-      if (res.intent.status === "previewed" || res.intent.status === "approval_required") {
-        const confirmed = await confirmIntent.mutateAsync({
-          id: res.intent.id,
-          confirmationText: confirmText || undefined,
-        });
-        update({ intent: confirmed.intent });
+    setSubmitError(null);
+    // a failed submit must surface its reason and leave the dialog open —
+    // an unhandled rejection here would freeze the confirm dialog silently
+    try {
+      if (mode === "live") {
+        const res = await createIntent.mutateAsync(body);
+        update({ intent: res.intent });
+        if (res.intent.status === "previewed" || res.intent.status === "approval_required") {
+          const confirmed = await confirmIntent.mutateAsync({
+            id: res.intent.id,
+            confirmationText: confirmText || undefined,
+          });
+          update({ intent: confirmed.intent });
+        }
+      } else {
+        const res = await place.mutateAsync({ ...body, mode });
+        update({ order: res.order, assessment: res.assessment });
       }
-    } else {
-      const res = await place.mutateAsync({ ...body, mode });
-      update({ order: res.order, assessment: res.assessment });
+      setConfirmText("");
+      setOpen(false);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "order failed — see audit log");
     }
-    setConfirmText("");
-    setOpen(false);
   };
 
   const a = state.assessment;
@@ -425,6 +433,9 @@ export function OrderTicket({
                   ) : null}
                 </div>
               ) : null}
+              {submitError ? (
+                <p className="text-2xs text-neg">order failed: {submitError}</p>
+              ) : null}
               <div className="flex justify-end gap-1.5">
                 <Button onClick={() => setOpen(false)}>cancel</Button>
                 <Button
@@ -432,7 +443,8 @@ export function OrderTicket({
                   disabled={
                     !a.approved ||
                     busy ||
-                    (needsTyped && confirmText.trim().toUpperCase() !== "CONFIRM")
+                    // exact match — the server requires exactly "CONFIRM"
+                    (needsTyped && confirmText.trim() !== "CONFIRM")
                   }
                   onClick={submit}
                 >

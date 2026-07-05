@@ -20,6 +20,7 @@ import { mmAbsenceSignal } from "./mmAbsence";
 import { liquidityVacuumSignal } from "./liquidityVacuum";
 import { flowToxicitySignal } from "./flowToxicity";
 import { phantomDepthSignal } from "./phantomDepth";
+import { favoriteConvergenceSignal } from "./favoriteConvergence";
 
 export const STRATEGIES: SignalStrategy[] = [
   liquiditySpreadSignal,
@@ -39,6 +40,7 @@ export const STRATEGIES: SignalStrategy[] = [
   liquidityVacuumSignal,
   flowToxicitySignal,
   phantomDepthSignal,
+  favoriteConvergenceSignal,
 ];
 
 export function getStrategy(id: string): SignalStrategy | undefined {
@@ -46,14 +48,19 @@ export function getStrategy(id: string): SignalStrategy | undefined {
 }
 
 /** Run every registered strategy against one market context. */
-export function runAllStrategies(ctx: SignalContext): SignalResult[] {
+export function runAllStrategies(
+  ctx: SignalContext,
+  onError?: (strategyId: string, err: unknown) => void,
+): SignalResult[] {
   const out: SignalResult[] = [];
   for (const s of STRATEGIES) {
     try {
       const r = s.run(ctx);
       if (r) out.push(r);
-    } catch {
-      // a strategy crash must never take down the scan loop
+    } catch (err) {
+      // a strategy crash must never take down the scan loop — but it must
+      // never vanish silently either; the caller decides where it's logged
+      onError?.(s.id, err);
     }
   }
   return out;

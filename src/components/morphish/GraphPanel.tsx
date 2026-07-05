@@ -92,8 +92,11 @@ export function GraphPanel({
   const [venueFilter, setVenueFilter] = useState("all");
   const [catFilter, setCatFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pinnedEdge, setPinnedEdge] = useState<GraphEdge | null>(null);
-  const [hoverEdge, setHoverEdge] = useState<GraphEdge | null>(null);
+  // edges are tracked BY ID: the 20s poll returns new edge objects, and a
+  // reference-held pin would stop matching anything (whole graph dims, stale
+  // tooltip pins forever)
+  const [pinnedEdgeId, setPinnedEdgeId] = useState<string | null>(null);
+  const [hoverEdgeId, setHoverEdgeId] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<Placed | null>(null);
 
   const placed = useMemo(
@@ -150,7 +153,8 @@ export function GraphPanel({
 
   const s = data?.stats;
   const histMax = Math.max(1, ...(data?.histogram ?? []).map((h) => h.count));
-  const infoEdge = pinnedEdge ?? hoverEdge;
+  const infoEdgeId = pinnedEdgeId ?? hoverEdgeId;
+  const infoEdge = infoEdgeId ? (data?.edges ?? []).find((x) => x.id === infoEdgeId) ?? null : null;
   const selectedNode = selectedId ? placed.get(selectedId) : undefined;
 
   const clickNode = (n: Placed) => {
@@ -161,7 +165,7 @@ export function GraphPanel({
       return;
     }
     setSelectedId(n.id);
-    setPinnedEdge(null);
+    setPinnedEdgeId(null);
   };
 
   return (
@@ -215,7 +219,7 @@ export function GraphPanel({
               // click on empty canvas clears selection + pin
               if (e.target === e.currentTarget) {
                 setSelectedId(null);
-                setPinnedEdge(null);
+                setPinnedEdgeId(null);
               }
             }}
           >
@@ -223,7 +227,7 @@ export function GraphPanel({
               const a = placed.get(e.source)!;
               const b = placed.get(e.target)!;
               const onPath = path?.edges.includes(e) ?? false;
-              const dimmed = (path !== null && !onPath) || (infoEdge !== null && infoEdge !== e && !onPath);
+              const dimmed = (path !== null && !onPath) || (infoEdge !== null && infoEdge.id !== e.id && !onPath);
               return (
                 <path
                   key={e.id}
@@ -232,11 +236,11 @@ export function GraphPanel({
                   stroke={e.tone === "blue" ? "#2563eb" : e.tone === "red" ? "#b91c1c" : "#999"}
                   strokeWidth={(0.6 + e.strength * 1.4) * (onPath ? 1.6 : 1)}
                   strokeDasharray={e.dotted ? "3 3" : undefined}
-                  opacity={onPath || infoEdge === e ? 0.95 : dimmed ? 0.08 : 0.35}
+                  opacity={onPath || infoEdge?.id === e.id ? 0.95 : dimmed ? 0.08 : 0.35}
                   className="cursor-pointer"
-                  onMouseEnter={() => setHoverEdge(e)}
-                  onMouseLeave={() => setHoverEdge(null)}
-                  onClick={() => setPinnedEdge(pinnedEdge === e ? null : e)}
+                  onMouseEnter={() => setHoverEdgeId(e.id)}
+                  onMouseLeave={() => setHoverEdgeId(null)}
+                  onClick={() => setPinnedEdgeId(pinnedEdgeId === e.id ? null : e.id)}
                 />
               );
             })}
@@ -292,7 +296,7 @@ export function GraphPanel({
               ) : infoEdge ? (
                 <div className="text-ink-soft">
                   <span className="font-semibold uppercase">{infoEdge.type.replace(/_/g, " ")}</span> — {infoEdge.note}
-                  {pinnedEdge === infoEdge ? <span className="text-ink-faint"> (pinned — click edge to unpin)</span> : null}
+                  {pinnedEdgeId === infoEdge.id ? <span className="text-ink-faint"> (pinned — click edge to unpin)</span> : null}
                 </div>
               ) : null}
             </div>

@@ -281,7 +281,12 @@ export class MemoryStore implements Store {
   }
 
   async getKV<T>(key: string): Promise<T | undefined> {
-    return this.data.kv[key] as T | undefined;
+    // detached copy — the Store contract (matching the Prisma driver) is
+    // that mutating a getKV result NEVER mutates persisted state; callers
+    // must write back via setKV. A live reference here let a read-only
+    // route's in-place .sort() reorder persisted data.
+    const v = this.data.kv[key];
+    return v === undefined ? undefined : (structuredClone(v) as T);
   }
 
   async setKV<T>(key: string, value: T): Promise<void> {

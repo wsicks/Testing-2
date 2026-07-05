@@ -18,7 +18,13 @@ export async function GET(req: NextRequest) {
   ensureBackgroundScanner();
   const store = await getStore();
   const settings = await store.getSettings();
-  const mode = (req.nextUrl.searchParams.get("mode") ?? settings.defaultMode) as TerminalMode;
+  // validate mode: an arbitrary ?mode= string would insert a permanent memo
+  // entry (unbounded map growth) and recompute the store for junk values
+  const rawMode = req.nextUrl.searchParams.get("mode");
+  const mode: TerminalMode =
+    rawMode === "demo" || rawMode === "paper" || rawMode === "live"
+      ? rawMode
+      : settings.defaultMode;
   const cached = memo().get(mode);
   if (cached && Date.now() - cached.at < 5_000) {
     return NextResponse.json({ ...cached.payload, cached: true });
@@ -37,6 +43,7 @@ export async function GET(req: NextRequest) {
   // week of history exists; anchored to the oldest snapshot ≤7d back that is
   // at least 1d old
   let change7dUsd: number | undefined;
+  let change7dSpanDays: number | undefined;
   try {
     const snaps = await store.listPortfolioSnapshots(mode, 400);
     const nowMs = Date.now();
@@ -45,7 +52,11 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.ts - b.ts)[0];
     if (anchor) {
       const current = snaps.sort((a, b) => b.ts - a.ts)[0];
-      if (current) change7dUsd = Number((current.totalValue - anchor.totalValue).toFixed(2));
+      if (current) {
+        change7dUsd = Number((current.totalValue - anchor.totalValue).toFixed(2));
+        // honest label: with <7d of history this is an Nd change, not 7d
+        change7dSpanDays = Math.max(1, Math.round((nowMs - anchor.ts) / 86_400_000));
+      }
     }
   } catch {
     /* snapshots unavailable → pill shows — */
@@ -54,6 +65,7 @@ export async function GET(req: NextRequest) {
     killSwitch: settings.killSwitch,
     openOrderExposure,
     change7dUsd,
+    change7dSpanDays,
   });
   memo().set(mode, { at: Date.now(), payload });
   return NextResponse.json(payload);
