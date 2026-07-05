@@ -53,6 +53,16 @@ const patchSchema = z
       }),
       coingecko: z.object({ publicData: z.boolean() }),
     }),
+    alpha: z.object({
+      foundryEnabled: z.boolean(),
+      walletFollowMode: z.enum(["watch_only", "confirm_only", "paper_mimic", "paper_fade"]),
+      walletLiveEnabled: z.boolean(),
+      maxCopyDriftCents: z.number().min(0.5).max(10),
+      maxWalletEntryAgeMin: z.number().min(5).max(60 * 24 * 7),
+      minWalletSampleSize: z.number().min(5).max(500),
+      minWalletForwardSamples: z.number().min(3).max(200),
+      testOrderUsd: z.number().min(1).max(25),
+    }),
     autopilot: z.object({
       mode: z.enum(["off", "observe", "paper", "live"]),
       enabledStrategies: z.array(z.string()).max(20),

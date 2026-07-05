@@ -415,3 +415,231 @@ model AppSetting {
   @@unique([userId, key])
   @@map("app_settings")
 }
+
+// ── Alpha Foundry ─────────────────────────────────────────────────────────────
+
+model SourceRegistryRow {
+  sourceId              String    @id
+  sourceName            String
+  category              String
+  baseUrl               String
+  docsUrl               String?
+  officialSource        Boolean   @default(false)
+  freeAvailable         Boolean   @default(true)
+  apiKeyRequired        Boolean   @default(false)
+  authenticationType    String    @default("none")
+  rateLimit             String?
+  latencyEstimateMs     Int?
+  updateFrequency       String?
+  historicalDepth       String?
+  allowedUse            String?
+  prohibitedUse         String?
+  commercialUseAllowed  String    @default("unknown")
+  redistributionAllowed String    @default("unknown")
+  reliabilityScore      Float     @default(0.5)
+  freshnessScore        Float?
+  signalCategories      String[]  @default([])
+  marketCategories      String[]  @default([])
+  lastSuccessfulCall    DateTime?
+  lastFailedCall        DateTime?
+  lastTermsReview       DateTime?
+  status                String    @default("disabled")
+  note                  String?
+
+  @@map("source_registry")
+}
+
+model TrackedWalletRow {
+  walletId       String    @id // lowercase public proxy-wallet address
+  pseudonym      String? // venue-published display name only — never inferred identity
+  label          String    @default("low_sample_unknown")
+  labels         String[]  @default([])
+  firstSeen      DateTime  @default(now())
+  lastSeen       DateTime  @updatedAt
+  manuallyAdded  Boolean   @default(false)
+  autoDiscovered Boolean   @default(true)
+  status         String    @default("candidate")
+  rejectReason   String?
+  candidateScore Float?
+  totalClosed    Int       @default(0)
+  totalPnl       Float     @default(0)
+  costAdjRoi     Float     @default(0)
+  forwardJson    Json?
+  notes          String?
+  lastScoredAt   DateTime?
+
+  trades WalletTradeRow[]
+  skills WalletSkillScoreRow[]
+
+  @@map("tracked_wallets")
+}
+
+model WalletTradeRow {
+  id              String   @id @default(cuid())
+  walletId        String
+  venue           String   @default("polymarket")
+  conditionId     String
+  asset           String
+  outcome         String?
+  side            String
+  size            Float
+  price           Float
+  ts              DateTime
+  transactionHash String?
+  marketTitle     String?
+  eventSlug       String?
+  category        String?
+  closeTime       DateTime?
+
+  wallet TrackedWalletRow @relation(fields: [walletId], references: [walletId], onDelete: Cascade)
+
+  @@index([walletId, ts])
+  @@map("wallet_trades")
+}
+
+model WalletPositionRow {
+  id            String   @id @default(cuid())
+  walletId      String
+  conditionId   String
+  outcome       String?
+  size          Float
+  avgEntry      Float
+  markPrice     Float?
+  realizedPnl   Float    @default(0)
+  unrealizedPnl Float?
+  totalPnl      Float?
+  status        String   @default("open")
+  updatedAt     DateTime @updatedAt
+
+  @@index([walletId])
+  @@map("wallet_positions")
+}
+
+model WalletSkillScoreRow {
+  id                     String   @id @default(cuid())
+  walletId               String
+  dimension              String // cat:crypto | dur:short | liq:low | …
+  sampleSize             Int      @default(0)
+  realizedRoi            Float    @default(0)
+  costAdjRoi             Float    @default(0)
+  winRate                Float    @default(0)
+  profitFactor           Float    @default(0)
+  maxDrawdown            Float    @default(0)
+  copyableRoi            Float?
+  fadeRoi                Float?
+  entryTimingScore       Float?
+  exitTimingScore        Float?
+  liquidityAdjustedScore Float?
+  slippageAdjustedScore  Float?
+  confidence             Float    @default(0)
+  updatedAt              DateTime @updatedAt
+
+  wallet TrackedWalletRow @relation(fields: [walletId], references: [walletId], onDelete: Cascade)
+
+  @@unique([walletId, dimension])
+  @@map("wallet_skill_scores")
+}
+
+model WalletSignalRow {
+  id                String   @id @default(cuid())
+  walletId          String
+  conditionId       String
+  signalType        String
+  direction         String
+  walletEntryPrice  Float?
+  currentPrice      Float?
+  priceDrift        Float?
+  mimicabilityScore Float?
+  categoryFit       Float?
+  remainingEdge     Float?
+  liquidityScore    Float?
+  ruleClarity       Float?
+  crowdingPenalty   Float?
+  recommendation    String?
+  createdAt         DateTime @default(now())
+
+  @@index([walletId, createdAt])
+  @@map("wallet_signals")
+}
+
+model AlphaFeatureRow {
+  id              String    @id
+  name            String
+  thesis          String
+  dataSources     String[]  @default([])
+  categoryScope   String[]  @default([])
+  status          String    @default("idea")
+  alphaScore      Float?
+  componentsJson  Json?
+  killCriteria    String?
+  failureReason   String?
+  failureClass    String?
+  lessons         String?
+  revisitable     Boolean?
+  humanApprovedAt DateTime?
+  humanApprovedBy String?
+  promotedAt      DateTime?
+  retiredAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("alpha_features")
+}
+
+model AlphaOutcomeRow {
+  id              String   @id @default(cuid())
+  featureId       String
+  signalId        String
+  conditionId     String
+  direction       String
+  entryMid        Float
+  spreadAtSignal  Float?
+  bookAgeMs       Int?
+  tradable        Boolean  @default(false)
+  wasProposed     Boolean  @default(false)
+  walletId        String?
+  bucketsJson     Json
+  createdAt       DateTime @default(now())
+
+  @@index([featureId, createdAt])
+  @@map("alpha_outcomes")
+}
+
+model DisclosureRow {
+  id              String   @id
+  source          String
+  docType         String?
+  title           String
+  url             String
+  filingDate      String
+  transactionDate String?
+  lagDays         Float?
+  agency          String?
+  sector          String?
+  policyTags      String[] @default([])
+  relatedJson     Json?
+  confidence      Float    @default(0)
+  humanReview     Boolean  @default(true)
+  fetchedAt       DateTime @default(now())
+
+  @@map("disclosures")
+}
+
+model ResearchIdeaRow {
+  id              String   @id
+  title           String
+  marketCategory  String?
+  dataSource      String?
+  accessMethod    String?
+  expectedLatency String?
+  alphaThesis     String?
+  risks           String?
+  termsConcerns   String?
+  backtestMethod  String?
+  paperTestPlan   String?
+  killCriteria    String?
+  status          String   @default("proposed")
+  createdAt       DateTime @default(now())
+
+  @@map("research_ideas")
+}

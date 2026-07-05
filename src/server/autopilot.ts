@@ -405,6 +405,21 @@ async function executeEntry(
       });
       return false;
     }
+    // Alpha Foundry gate: only PROMOTED features (prosecutor pass + human
+    // approval) may ever route to live — experimental/paper strategies are
+    // structurally incapable of reaching this path
+    const { liveEligibleStrategies } = await import("./alpha/foundry");
+    const eligible = await liveEligibleStrategies();
+    if (!eligible.has(strategy)) {
+      record({
+        kind: "skip",
+        strategy,
+        conditionId: proposal.conditionId,
+        marketQuestion: proposal.marketTitle,
+        reason: `strategy '${strategy}' is not PROMOTED in the Alpha Foundry — experimental signals never trade live`,
+      });
+      return false;
+    }
     const { intent, assessment } = await createLiveIntent({ ...base, mode: "live" });
     if (intent.status === "rejected") {
       record({

@@ -214,6 +214,10 @@ export interface SignalContext {
   };
   /** cross-venue links involving this market */
   crossLinks?: CrossVenueLink[];
+  /** tracked-wallet stances in this market (Wallet Radar, cold-path built) */
+  walletIntel?: import("./alpha/types").MarketWalletIntel;
+  /** alpha/wallet-follow thresholds (subset of AppSettings) */
+  alpha?: import("./alpha/types").AlphaSettings;
   settings: RiskSettings;
   now: number;
 }
@@ -249,7 +253,7 @@ export interface PaperOrder {
   marketTitle?: string;
   category?: string;
   /** who initiated this order */
-  origin?: "manual" | "autopilot";
+  origin?: "manual" | "autopilot" | "wallet_mimic";
   side: OrderSide;
   orderType: OrderType;
   price: number;
@@ -277,7 +281,7 @@ export interface LiveOrderIntent {
   tokenId: string;
   outcome?: string;
   marketTitle?: string;
-  origin?: "manual" | "autopilot";
+  origin?: "manual" | "autopilot" | "wallet_mimic";
   side: OrderSide;
   orderType: OrderType;
   price: number;
@@ -371,6 +375,8 @@ export interface UserPrefs {
   watchWallet?: string;
   /** automated-trading policy & envelope */
   autopilot: AutopilotConfig;
+  /** Alpha Foundry + Wallet Radar controls */
+  alpha: import("./alpha/types").AlphaSettings;
   /** per-venue enablement — live flags are independent per venue */
   venues: Record<Exclude<VenueId, "coingecko">, VenueSettings> & {
     coingecko: { publicData: boolean };

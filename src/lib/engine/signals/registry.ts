@@ -13,6 +13,9 @@ import { microstructureSignal } from "./microstructure";
 import { referencePriceSignal } from "./referencePrice";
 import { venueDivergenceSignal } from "./venueDivergence";
 import { eclSignal } from "./ecl";
+import { walletShadowSignal } from "./walletShadow";
+import { walletFadeSignal } from "./walletFade";
+import { deadlineCurvatureSignal } from "./deadlineCurvature";
 
 export const STRATEGIES: SignalStrategy[] = [
   liquiditySpreadSignal,
@@ -25,6 +28,9 @@ export const STRATEGIES: SignalStrategy[] = [
   referencePriceSignal,
   venueDivergenceSignal,
   eclSignal,
+  walletShadowSignal,
+  walletFadeSignal,
+  deadlineCurvatureSignal,
 ];
 
 export function getStrategy(id: string): SignalStrategy | undefined {

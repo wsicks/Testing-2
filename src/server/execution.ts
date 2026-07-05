@@ -40,7 +40,7 @@ export interface PlaceOrderBody {
   signalId?: string;
   targetPrice?: number;
   stopPrice?: number;
-  origin?: "manual" | "autopilot";
+  origin?: "manual" | "autopilot" | "wallet_mimic";
   /** risk-reducing exit of an existing position */
   isExit?: boolean;
 }

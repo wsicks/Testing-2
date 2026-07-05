@@ -500,3 +500,104 @@ export function useBacktest() {
       }),
   });
 }
+
+// ── Alpha Foundry ─────────────────────────────────────────────────────────
+
+export interface FoundryResponse {
+  features: (import("@/lib/alpha/types").AlphaFeature & {
+    evidence: import("@/lib/alpha/types").FeatureEvidence;
+  })[];
+  graveyard: (import("@/lib/alpha/types").AlphaFeature & {
+    evidence: import("@/lib/alpha/types").FeatureEvidence;
+  })[];
+  ideas: import("@/lib/alpha/types").ResearchIdea[];
+  lastRuns: Record<string, number | undefined>;
+  walletIntel: { markets: number; builtAt: number };
+  researchAgentPrompt: string;
+}
+
+export function useFoundry() {
+  return useQuery<FoundryResponse>({
+    queryKey: ["alpha", "foundry"],
+    queryFn: () => json("/api/alpha/foundry"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useFoundryAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      json<Record<string, unknown>>("/api/alpha/foundry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["alpha"] }),
+  });
+}
+
+export function useAlphaSources() {
+  return useQuery<{ sources: import("@/lib/alpha/types").SourceRecord[] }>({
+    queryKey: ["alpha", "sources"],
+    queryFn: () => json("/api/alpha/sources"),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useSourceHealthCheck() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      json<{ checked: number }>("/api/alpha/sources", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "health" }),
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["alpha", "sources"] }),
+  });
+}
+
+export function useAlphaWallets() {
+  return useQuery<{
+    wallets: import("@/lib/alpha/types").TrackedWalletRecord[];
+    intel: { markets: number; builtAt: number };
+  }>({
+    queryKey: ["alpha", "wallets"],
+    queryFn: () => json("/api/alpha/wallets"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useWalletAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      json<Record<string, unknown>>("/api/alpha/wallets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["alpha", "wallets"] }),
+  });
+}
+
+export function useWalletDetail(walletId?: string) {
+  return useQuery<{
+    wallet: import("@/lib/alpha/types").TrackedWalletRecord;
+    trades: import("@/server/alpha/repo").WalletTradeLite[];
+    signals: SignalResult[];
+  }>({
+    queryKey: ["alpha", "wallet", walletId],
+    queryFn: () => json(`/api/alpha/wallets/${walletId}`),
+    enabled: !!walletId,
+  });
+}
+
+export function useDisclosures() {
+  return useQuery<{ disclosures: import("@/lib/alpha/types").DisclosureRecord[] }>({
+    queryKey: ["alpha", "disclosures"],
+    queryFn: () => json("/api/alpha/disclosures"),
+    refetchInterval: 120_000,
+  });
+}

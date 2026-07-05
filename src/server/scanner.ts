@@ -26,6 +26,10 @@ import {
 import { maybeSnapshotPortfolio } from "./portfolio";
 import { settleOpenOrders } from "./execution";
 import { getStore } from "./store";
+import { ensureFoundryTicker } from "./alpha/foundry";
+import { runMimicExecutor } from "./alpha/mimic";
+import { trackSignalOutcomes } from "./alpha/outcomes";
+import { getWalletIntel } from "./alpha/walletRadar";
 
 interface ScannerGlobal {
   lastScanAt: number;
@@ -162,6 +166,9 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
           relatedMarkets: m.volume24h >= 10_000 ? markets : undefined,
           reference: referenceFor(m),
           crossLinks,
+          // cold-path built by the Wallet Radar ticker; in-memory read here
+          walletIntel: getWalletIntel(m.conditionId),
+          alpha: settings.alpha,
           settings,
           now,
         }),
@@ -203,6 +210,16 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       );
     }
 
+    // Alpha Foundry: measure forward drift for every persisted directional
+    // signal (proposed AND self-rejected — both are evidence), then run the
+    // paper mimic/fade executor when the follow mode allows it
+    try {
+      await trackSignalOutcomes(toPersist, markets);
+      await runMimicExecutor(toPersist, markets);
+    } catch (err) {
+      console.error("[eventquant] alpha outcome/mimic step failed:", err);
+    }
+
     // housekeeping piggybacked on the scan tick (settlement is mutex-guarded)
     await settleOpenOrders("paper");
     await settleOpenOrders("demo");
@@ -240,6 +257,7 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
  */
 export function ensureBackgroundScanner(): void {
   if (process.env.DISABLE_EMBEDDED_SCANNER === "true") return;
+  ensureFoundryTicker();
   const s = state();
   if (s.timer) return;
   s.timer = setInterval(() => {

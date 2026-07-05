@@ -369,6 +369,230 @@ CREATE TABLE "app_settings" (
     CONSTRAINT "app_settings_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "source_registry" (
+    "sourceId" TEXT NOT NULL,
+    "sourceName" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "baseUrl" TEXT NOT NULL,
+    "docsUrl" TEXT,
+    "officialSource" BOOLEAN NOT NULL DEFAULT false,
+    "freeAvailable" BOOLEAN NOT NULL DEFAULT true,
+    "apiKeyRequired" BOOLEAN NOT NULL DEFAULT false,
+    "authenticationType" TEXT NOT NULL DEFAULT 'none',
+    "rateLimit" TEXT,
+    "latencyEstimateMs" INTEGER,
+    "updateFrequency" TEXT,
+    "historicalDepth" TEXT,
+    "allowedUse" TEXT,
+    "prohibitedUse" TEXT,
+    "commercialUseAllowed" TEXT NOT NULL DEFAULT 'unknown',
+    "redistributionAllowed" TEXT NOT NULL DEFAULT 'unknown',
+    "reliabilityScore" DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    "freshnessScore" DOUBLE PRECISION,
+    "signalCategories" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "marketCategories" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "lastSuccessfulCall" TIMESTAMP(3),
+    "lastFailedCall" TIMESTAMP(3),
+    "lastTermsReview" TIMESTAMP(3),
+    "status" TEXT NOT NULL DEFAULT 'disabled',
+    "note" TEXT,
+
+    CONSTRAINT "source_registry_pkey" PRIMARY KEY ("sourceId")
+);
+
+-- CreateTable
+CREATE TABLE "tracked_wallets" (
+    "walletId" TEXT NOT NULL,
+    "pseudonym" TEXT,
+    "label" TEXT NOT NULL DEFAULT 'low_sample_unknown',
+    "labels" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "firstSeen" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "lastSeen" TIMESTAMP(3) NOT NULL,
+    "manuallyAdded" BOOLEAN NOT NULL DEFAULT false,
+    "autoDiscovered" BOOLEAN NOT NULL DEFAULT true,
+    "status" TEXT NOT NULL DEFAULT 'candidate',
+    "rejectReason" TEXT,
+    "candidateScore" DOUBLE PRECISION,
+    "totalClosed" INTEGER NOT NULL DEFAULT 0,
+    "totalPnl" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "costAdjRoi" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "forwardJson" JSONB,
+    "notes" TEXT,
+    "lastScoredAt" TIMESTAMP(3),
+
+    CONSTRAINT "tracked_wallets_pkey" PRIMARY KEY ("walletId")
+);
+
+-- CreateTable
+CREATE TABLE "wallet_trades" (
+    "id" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
+    "venue" TEXT NOT NULL DEFAULT 'polymarket',
+    "conditionId" TEXT NOT NULL,
+    "asset" TEXT NOT NULL,
+    "outcome" TEXT,
+    "side" TEXT NOT NULL,
+    "size" DOUBLE PRECISION NOT NULL,
+    "price" DOUBLE PRECISION NOT NULL,
+    "ts" TIMESTAMP(3) NOT NULL,
+    "transactionHash" TEXT,
+    "marketTitle" TEXT,
+    "eventSlug" TEXT,
+    "category" TEXT,
+    "closeTime" TIMESTAMP(3),
+
+    CONSTRAINT "wallet_trades_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "wallet_positions" (
+    "id" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
+    "conditionId" TEXT NOT NULL,
+    "outcome" TEXT,
+    "size" DOUBLE PRECISION NOT NULL,
+    "avgEntry" DOUBLE PRECISION NOT NULL,
+    "markPrice" DOUBLE PRECISION,
+    "realizedPnl" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "unrealizedPnl" DOUBLE PRECISION,
+    "totalPnl" DOUBLE PRECISION,
+    "status" TEXT NOT NULL DEFAULT 'open',
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "wallet_positions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "wallet_skill_scores" (
+    "id" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
+    "dimension" TEXT NOT NULL,
+    "sampleSize" INTEGER NOT NULL DEFAULT 0,
+    "realizedRoi" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "costAdjRoi" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "winRate" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "profitFactor" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "maxDrawdown" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "copyableRoi" DOUBLE PRECISION,
+    "fadeRoi" DOUBLE PRECISION,
+    "entryTimingScore" DOUBLE PRECISION,
+    "exitTimingScore" DOUBLE PRECISION,
+    "liquidityAdjustedScore" DOUBLE PRECISION,
+    "slippageAdjustedScore" DOUBLE PRECISION,
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "wallet_skill_scores_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "wallet_signals" (
+    "id" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
+    "conditionId" TEXT NOT NULL,
+    "signalType" TEXT NOT NULL,
+    "direction" TEXT NOT NULL,
+    "walletEntryPrice" DOUBLE PRECISION,
+    "currentPrice" DOUBLE PRECISION,
+    "priceDrift" DOUBLE PRECISION,
+    "mimicabilityScore" DOUBLE PRECISION,
+    "categoryFit" DOUBLE PRECISION,
+    "remainingEdge" DOUBLE PRECISION,
+    "liquidityScore" DOUBLE PRECISION,
+    "ruleClarity" DOUBLE PRECISION,
+    "crowdingPenalty" DOUBLE PRECISION,
+    "recommendation" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "wallet_signals_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "alpha_features" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "thesis" TEXT NOT NULL,
+    "dataSources" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "categoryScope" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "status" TEXT NOT NULL DEFAULT 'idea',
+    "alphaScore" DOUBLE PRECISION,
+    "componentsJson" JSONB,
+    "killCriteria" TEXT,
+    "failureReason" TEXT,
+    "failureClass" TEXT,
+    "lessons" TEXT,
+    "revisitable" BOOLEAN,
+    "humanApprovedAt" TIMESTAMP(3),
+    "humanApprovedBy" TEXT,
+    "promotedAt" TIMESTAMP(3),
+    "retiredAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "alpha_features_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "alpha_outcomes" (
+    "id" TEXT NOT NULL,
+    "featureId" TEXT NOT NULL,
+    "signalId" TEXT NOT NULL,
+    "conditionId" TEXT NOT NULL,
+    "direction" TEXT NOT NULL,
+    "entryMid" DOUBLE PRECISION NOT NULL,
+    "spreadAtSignal" DOUBLE PRECISION,
+    "bookAgeMs" INTEGER,
+    "tradable" BOOLEAN NOT NULL DEFAULT false,
+    "wasProposed" BOOLEAN NOT NULL DEFAULT false,
+    "walletId" TEXT,
+    "bucketsJson" JSONB NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "alpha_outcomes_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "disclosures" (
+    "id" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "docType" TEXT,
+    "title" TEXT NOT NULL,
+    "url" TEXT NOT NULL,
+    "filingDate" TEXT NOT NULL,
+    "transactionDate" TEXT,
+    "lagDays" DOUBLE PRECISION,
+    "agency" TEXT,
+    "sector" TEXT,
+    "policyTags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "relatedJson" JSONB,
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "humanReview" BOOLEAN NOT NULL DEFAULT true,
+    "fetchedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "disclosures_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "research_ideas" (
+    "id" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "marketCategory" TEXT,
+    "dataSource" TEXT,
+    "accessMethod" TEXT,
+    "expectedLatency" TEXT,
+    "alphaThesis" TEXT,
+    "risks" TEXT,
+    "termsConcerns" TEXT,
+    "backtestMethod" TEXT,
+    "paperTestPlan" TEXT,
+    "killCriteria" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'proposed',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "research_ideas_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -450,6 +674,21 @@ CREATE INDEX "venue_health_venueId_lastUpdated_idx" ON "venue_health"("venueId",
 -- CreateIndex
 CREATE UNIQUE INDEX "app_settings_userId_key_key" ON "app_settings"("userId", "key");
 
+-- CreateIndex
+CREATE INDEX "wallet_trades_walletId_ts_idx" ON "wallet_trades"("walletId", "ts");
+
+-- CreateIndex
+CREATE INDEX "wallet_positions_walletId_idx" ON "wallet_positions"("walletId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "wallet_skill_scores_walletId_dimension_key" ON "wallet_skill_scores"("walletId", "dimension");
+
+-- CreateIndex
+CREATE INDEX "wallet_signals_walletId_createdAt_idx" ON "wallet_signals"("walletId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "alpha_outcomes_featureId_createdAt_idx" ON "alpha_outcomes"("featureId", "createdAt");
+
 -- AddForeignKey
 ALTER TABLE "wallets" ADD CONSTRAINT "wallets_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -479,4 +718,10 @@ ALTER TABLE "venue_health" ADD CONSTRAINT "venue_health_venueId_fkey" FOREIGN KE
 
 -- AddForeignKey
 ALTER TABLE "app_settings" ADD CONSTRAINT "app_settings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "wallet_trades" ADD CONSTRAINT "wallet_trades_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "tracked_wallets"("walletId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "wallet_skill_scores" ADD CONSTRAINT "wallet_skill_scores_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "tracked_wallets"("walletId") ON DELETE CASCADE ON UPDATE CASCADE;
 

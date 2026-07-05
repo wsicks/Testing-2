@@ -61,6 +61,22 @@ export const DEFAULT_AUTOPILOT: AutopilotConfig = {
   requireRegimeMatch: true,
 };
 
+/**
+ * Alpha Foundry / Wallet Radar defaults: research on, following watch-only,
+ * live wallet-copying OFF (and further gated by promotion + approval + the
+ * per-venue live gate + per-order confirmation even when turned on).
+ */
+export const DEFAULT_ALPHA: AppSettings["alpha"] = {
+  foundryEnabled: true,
+  walletFollowMode: "watch_only",
+  walletLiveEnabled: false,
+  maxCopyDriftCents: 2,
+  maxWalletEntryAgeMin: 720,
+  minWalletSampleSize: 20,
+  minWalletForwardSamples: 10,
+  testOrderUsd: 25,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   // risk
   defaultMode: "demo",
@@ -88,6 +104,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   scannersEnabled: true,
   paperStartingCash: 10_000,
   autopilot: DEFAULT_AUTOPILOT,
+  alpha: DEFAULT_ALPHA,
   // public data on; paper on; live LOCKED — independently per venue
   venues: {
     polymarket: { publicData: true, paperTrading: true, liveEnabled: false },
