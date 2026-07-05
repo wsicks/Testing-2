@@ -19,6 +19,7 @@ import { deadlineCurvatureSignal } from "./deadlineCurvature";
 import { mmAbsenceSignal } from "./mmAbsence";
 import { liquidityVacuumSignal } from "./liquidityVacuum";
 import { flowToxicitySignal } from "./flowToxicity";
+import { phantomDepthSignal } from "./phantomDepth";
 
 export const STRATEGIES: SignalStrategy[] = [
   liquiditySpreadSignal,
@@ -37,6 +38,7 @@ export const STRATEGIES: SignalStrategy[] = [
   mmAbsenceSignal,
   liquidityVacuumSignal,
   flowToxicitySignal,
+  phantomDepthSignal,
 ];
 
 export function getStrategy(id: string): SignalStrategy | undefined {

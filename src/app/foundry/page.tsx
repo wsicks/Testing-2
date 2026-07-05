@@ -266,6 +266,74 @@ export default function FoundryPage() {
         )}
       </Panel>
 
+      <Panel title="evidence lab — the machine reading its own outcome archive">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div>
+            <div className="label">signal confluence (joint 1h drift vs best solo, pairs with n ≥ {data?.confluence.minSamples ?? 8})</div>
+            {!data?.confluence.cells.length ? (
+              <EmptyNote>
+                no strategy pair has fired together often enough yet — the
+                matrix fills as strategies co-fire on the same markets within
+                {" "}{Math.round((data?.confluence.windowMs ?? 900000) / 60000)}min
+              </EmptyNote>
+            ) : (
+              <table className="w-full text-2xs">
+                <thead>
+                  <tr className="border-b border-line-strong text-left">
+                    {["pair", "n", "joint 1h", "solo A", "solo B", "lift"].map((h) => (
+                      <th key={h} className="cell label">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.confluence.cells.slice(0, 8).map((c) => (
+                    <tr key={`${c.a}|${c.b}`} className="border-b border-line/60">
+                      <td className="cell font-semibold">{c.a} + {c.b}</td>
+                      <td className="cell"><Num>{c.n}</Num></td>
+                      <td className="cell"><Num tone={c.jointAvg1h}>{(c.jointAvg1h * 100).toFixed(2)}c</Num></td>
+                      <td className="cell"><Num className="text-ink-faint">{(c.soloAvgA * 100).toFixed(2)}c</Num></td>
+                      <td className="cell"><Num className="text-ink-faint">{(c.soloAvgB * 100).toFixed(2)}c</Num></td>
+                      <td className="cell"><Num tone={c.lift}>{(c.lift * 100).toFixed(2)}c</Num></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="pt-0.5 text-3xs text-ink-faint">
+              positive lift = the combination adds information; ~zero = the two
+              strategies are counting the same fact twice
+            </p>
+          </div>
+          <div>
+            <div className="label">
+              drift by price level ({data?.driftProfile.totalSamples ?? 0} samples, 24h raw drift)
+            </div>
+            <div className="flex h-20 items-end gap-0.5 pt-1">
+              {(data?.driftProfile.buckets ?? []).map((b) => {
+                // 24h drift once available; 1h fills within the first hour
+                const use24 = b.n > 0;
+                const val = use24 ? b.avgRawDrift24h : b.avgRawDrift1h;
+                const n = use24 ? b.n : b.n1h;
+                const h = Math.min(36, Math.abs(val) * 900);
+                return (
+                  <div key={b.lo} className="flex flex-1 flex-col items-center" title={`${(b.lo * 100).toFixed(0)}–${(b.hi * 100).toFixed(0)}c: ${(val * 100).toFixed(2)}c avg ${use24 ? "24h" : "1h"} drift, n=${n}`}>
+                    <div className="flex h-16 w-full flex-col justify-center">
+                      <div
+                        className={cn("w-full", val >= 0 ? "self-end bg-accent" : "self-start bg-neg", !use24 && "opacity-60")}
+                        style={{ height: `${n > 0 ? Math.max(2, h) : 0}px`, marginTop: val >= 0 ? `${36 - h}px` : "36px" }}
+                      />
+                    </div>
+                    <span className="text-3xs text-ink-faint">{(b.lo * 100).toFixed(0)}</span>
+                    <span className="text-3xs text-ink-faint">n{n}{!use24 && n > 0 ? "·1h" : ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="pt-0.5 text-3xs text-ink-faint">{data?.driftProfile.note}</p>
+          </div>
+        </div>
+      </Panel>
+
       <Panel title={`research agent — ideas (${data?.ideas.length ?? 0})`}>
         <p className="pb-1 text-3xs text-ink-faint">
           deterministic ideation over the source registry (source × category

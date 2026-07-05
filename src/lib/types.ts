@@ -218,6 +218,8 @@ export interface SignalContext {
   walletIntel?: import("./alpha/types").MarketWalletIntel;
   /** rolling microstructure baseline for this market (spread/liquidity EMAs) */
   baseline?: { spreadEma: number; liquidityEma: number; samples: number };
+  /** the PREVIOUS scan's book snapshot for this market's YES token */
+  prevBook?: OrderBookData;
   /** alpha/wallet-follow thresholds (subset of AppSettings) */
   alpha?: import("./alpha/types").AlphaSettings;
   settings: RiskSettings;

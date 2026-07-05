@@ -49,7 +49,10 @@ async function hydrate(): Promise<void> {
   s.hydrating ??= (async () => {
     const loaded = await listOutcomes();
     const have = new Set(s.rows.map((r) => r.id));
-    s.rows = [...loaded.filter((r) => !have.has(r.id)), ...s.rows];
+    // heal: drop rows recorded before the binary-only gate (asset-market
+    // dollar "drift" masquerading as probability points)
+    const clean = loaded.filter((r) => r.entryMid > 0 && r.entryMid < 1);
+    s.rows = [...clean.filter((r) => !have.has(r.id)), ...s.rows];
     s.hydrated = true;
   })();
   await s.hydrating;
@@ -156,6 +159,9 @@ export async function trackSignalOutcomes(
     const m = marketById.get(sig.conditionId);
     const entryMid = m?.midpoint ?? m?.yesPrice;
     if (!m || entryMid === undefined) continue;
+    // probability-point drift only exists for binary outcome tokens — an
+    // asset market's dollar moves would poison every evidence consumer
+    if (m.outcomeType !== "binary" || entryMid <= 0 || entryMid >= 1) continue;
     const spread = m.spread;
     const row: AlphaOutcome = {
       id: genId("ao"),

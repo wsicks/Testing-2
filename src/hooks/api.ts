@@ -515,6 +515,8 @@ export interface FoundryResponse {
   walletIntel: { markets: number; builtAt: number };
   attention: import("@/server/alpha/attention").AttentionTopic[];
   paperPnl: Record<string, { realizedUsd: number; wins: number; losses: number }>;
+  confluence: import("@/lib/alpha/evidenceLab").ConfluenceResult;
+  driftProfile: import("@/lib/alpha/evidenceLab").DriftProfile;
   researchAgentPrompt: string;
 }
 

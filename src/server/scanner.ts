@@ -29,6 +29,7 @@ import { getStore } from "./store";
 import { ensureFoundryTicker } from "./alpha/foundry";
 import { pushSignals } from "./hotpath/signalCache";
 import { getBaseline, updateBaselines } from "./hotpath/baselines";
+import { swapBookSnapshot } from "./hotpath/bookMemory";
 import { runMimicExecutor } from "./alpha/mimic";
 import { trackSignalOutcomes } from "./alpha/outcomes";
 import { getWalletIntel } from "./alpha/walletRadar";
@@ -111,12 +112,16 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
       .sort((a, b) => b.volume24h - a.volume24h)
       .slice(0, SCANNER_BOOK_LIMIT);
     const books = new Map<string, OrderBookData>();
+    const prevBooks = new Map<string, OrderBookData>();
     const histories = new Map<string, { t: number; p: number }[]>();
     const tapes = new Map<string, RecentTrade[]>();
     for (const m of top) {
       if (!m.yesTokenId) continue;
       try {
-        books.set(m.conditionId, await getBook(m.yesTokenId, m.midpoint));
+        const book = await getBook(m.yesTokenId, m.midpoint);
+        books.set(m.conditionId, book);
+        const prev = swapBookSnapshot(m.yesTokenId, book);
+        if (prev) prevBooks.set(m.conditionId, prev);
         histories.set(m.conditionId, await getHistory(m.yesTokenId, "1d", 30));
         tapes.set(m.conditionId, await getTrades(m.conditionId));
       } catch {
@@ -169,6 +174,7 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
         runAllStrategies({
           market: m,
           book: books.get(m.conditionId),
+          prevBook: prevBooks.get(m.conditionId),
           history: histories.get(m.conditionId),
           trades: tapes.get(m.conditionId),
           relatedMarkets: m.volume24h >= 10_000 ? markets : undefined,
