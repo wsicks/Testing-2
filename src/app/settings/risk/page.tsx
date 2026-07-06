@@ -25,7 +25,8 @@ type NumericKey =
   | "typedConfirmThresholdUsd"
   | "staleDataMaxSecs"
   | "closingSoonHours"
-  | "paperStartingCash";
+  | "paperStartingCash"
+  | "liveDeclaredCashUsd";
 
 const FIELDS: { key: NumericKey; label: string; step?: string; hint: string }[] = [
   { key: "maxTradePct", label: "max trade (% of portfolio)", step: "0.25", hint: "default 1% — hard per-trade cap" },
@@ -44,6 +45,7 @@ const FIELDS: { key: NumericKey; label: string; step?: string; hint: string }[] 
   { key: "staleDataMaxSecs", label: "max data staleness (s)", hint: "no trade on stale market data" },
   { key: "closingSoonHours", label: "closing-soon window (h)", hint: "scanner window for near-resolution markets" },
   { key: "paperStartingCash", label: "paper starting cash ($)", hint: "applied on paper account reset" },
+  { key: "liveDeclaredCashUsd", label: "DECLARED live bankroll ($)", hint: "YOUR assertion — the app holds no keys and cannot verify venue balances; used only as the live risk ceiling. $0 keeps live BUYs blocked" },
 ];
 
 export default function RiskSettingsPage() {

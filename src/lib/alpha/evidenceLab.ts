@@ -110,6 +110,65 @@ export function confluenceMatrix(outcomes: AlphaOutcome[]): ConfluenceResult {
   return { cells, windowMs: CONFLUENCE_WINDOW_MS, minSamples: MIN_PAIR_SAMPLES };
 }
 
+// ── Narrative half-life ──────────────────────────────────────────────────────
+// Per-category repricing speed measured from OUR OWN decay curves: what
+// share of the eventual 24h move was already realized at 5m and at 1h?
+// Sports reprice in minutes; courts take days — one global TTL is wrong for
+// both. Same honesty caveat as everything here: conditioned on our signals.
+
+export interface CategoryHalfLife {
+  category: string;
+  /** rows with BOTH a 1h and 24h capture and a real 24h move (≥1c) */
+  n: number;
+  /** median share of the 24h move realized at 5m (undefined below sample) */
+  share5m?: number;
+  /** median share of the 24h move realized at 1h */
+  share1h: number;
+  speed: "minutes" | "hours" | "day+";
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+export function categoryHalfLives(outcomes: AlphaOutcome[], minN = 15): CategoryHalfLife[] {
+  const byCat = new Map<string, { r1h: number[]; r5m: number[] }>();
+  for (const o of outcomes) {
+    if (!o.category) continue;
+    const d24 = o.buckets.b24h?.drift;
+    const d1 = o.buckets.b1h?.drift;
+    if (d24 === undefined || d1 === undefined || Math.abs(d24) < 0.01) continue;
+    const acc = byCat.get(o.category) ?? { r1h: [], r5m: [] };
+    // overshoot beyond the 24h move caps at 1.5 — this is a ratio, and a
+    // reverted overshoot must not read as "300% repriced"
+    acc.r1h.push(Math.min(1.5, Math.abs(d1) / Math.abs(d24)));
+    const d5m = o.buckets.b5m?.drift;
+    if (d5m !== undefined) acc.r5m.push(Math.min(1.5, Math.abs(d5m) / Math.abs(d24)));
+    byCat.set(o.category, acc);
+  }
+  return [...byCat.entries()]
+    .filter(([, a]) => a.r1h.length >= minN)
+    .map(([category, a]) => {
+      const share1h = Number(median(a.r1h).toFixed(3));
+      const share5m = a.r5m.length >= minN ? Number(median(a.r5m).toFixed(3)) : undefined;
+      return {
+        category,
+        n: a.r1h.length,
+        share5m,
+        share1h,
+        speed:
+          share5m !== undefined && share5m >= 0.5
+            ? ("minutes" as const)
+            : share1h >= 0.5
+              ? ("hours" as const)
+              : ("day+" as const),
+      };
+    })
+    .sort((x, y) => y.share1h - x.share1h);
+}
+
 // ── Drift-by-price profile ───────────────────────────────────────────────────
 
 export interface PriceBucketDrift {

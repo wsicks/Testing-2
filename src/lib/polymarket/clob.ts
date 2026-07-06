@@ -3,7 +3,7 @@
 
 import { CLOB_API_URL } from "../constants";
 import type { OrderBookData, BookLevel, PricePoint } from "../types";
-import { getJson, qs, type HttpOpts } from "./http";
+import { getJson, postJson, qs, type HttpOpts } from "./http";
 
 interface RawBookLevel {
   price: string;
@@ -85,6 +85,29 @@ export async function fetchMidpoint(
   );
   const v = Number(r.mid);
   return Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Batch midpoints: POST /midpoints with [{token_id}] returns a
+ * token→"0.9535" string map (shape verified live 2026-07-06). One request
+ * serves the whole fast-lane watch set.
+ */
+export async function fetchMidpoints(
+  tokenIds: string[],
+  opts: HttpOpts = {},
+): Promise<Map<string, number>> {
+  if (tokenIds.length === 0) return new Map();
+  const raw = await postJson<Record<string, string>>(
+    `${CLOB_API_URL}/midpoints`,
+    tokenIds.map((token_id) => ({ token_id })),
+    opts,
+  );
+  const out = new Map<string, number>();
+  for (const [id, v] of Object.entries(raw ?? {})) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0 && n < 1) out.set(id, n);
+  }
+  return out;
 }
 
 export async function fetchBestPrice(

@@ -17,9 +17,10 @@
 // blob would silently drop samples.
 
 import type { AlphaOutcome, DecayBucketKey } from "@/lib/alpha/types";
-import { BUCKET_MS, BUCKET_ORDER } from "@/lib/alpha/score";
+import { BUCKET_MS, BUCKET_ORDER, categorizeMarket } from "@/lib/alpha/score";
 import type { NormalizedMarket, SignalResult } from "@/lib/types";
 import { genId } from "@/lib/utils";
+import { fastPriceFor, watchFastPrice } from "../hotpath/fastPrices";
 import { regByCondition } from "../hotpath/registry";
 import { listOutcomes, saveOutcomes } from "./repo";
 import { recordWalletForward } from "./walletRadar";
@@ -81,11 +82,14 @@ async function persist(): Promise<void> {
 }
 
 function midFor(conditionId: string): { mid: number; fetchedAt: number } | undefined {
+  // fast lane first: the 5s sampler's price is the only one that can be
+  // fresher than the ~30s registry cadence
+  const fast = fastPriceFor(conditionId);
   const m = regByCondition(conditionId);
-  if (!m) return undefined;
-  const mid = m.midpoint ?? m.yesPrice;
-  if (mid === undefined) return undefined;
-  return { mid, fetchedAt: m.fetchedAt };
+  const regMid = m ? m.midpoint ?? m.yesPrice : undefined;
+  if (fast && (!m || fast.fetchedAt >= m.fetchedAt)) return { mid: fast.mid, fetchedAt: fast.fetchedAt };
+  if (m && regMid !== undefined) return { mid: regMid, fetchedAt: m.fetchedAt };
+  return undefined;
 }
 
 /** direction-adjusted drift: positive = the market moved the signal's way */
@@ -193,11 +197,17 @@ export async function trackSignalOutcomes(
       wasProposed: sig.status === "proposed",
       walletId: typeof sig.meta?.walletId === "string" ? (sig.meta.walletId as string) : undefined,
       walletSign: sig.strategy === "wallet_fade" ? -1 : 1,
+      category: categorizeMarket({ question: m.question, category: m.category, tags: m.tags }),
       createdAt: now,
       buckets: {},
     };
     s.rows.push(row);
     added += 1;
+
+    // fast lane: sample this market's mid every 5s while the short-bucket
+    // timers are outstanding — the only price path fast enough for an
+    // honest b5s capture (registry refreshes on the ~30s scan cadence)
+    watchFastPrice(row.conditionId, m.yesTokenId);
 
     // short buckets: in-process timers reading in-memory prices only. If a
     // restart kills the timer, the sweep marks the bucket MISSED — a late

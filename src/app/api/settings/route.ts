@@ -30,6 +30,7 @@ const patchSchema = z
     killSwitch: z.boolean(),
     scannersEnabled: z.boolean(),
     paperStartingCash: z.number().min(100).max(10_000_000),
+    liveDeclaredCashUsd: z.number().min(0).max(10_000_000),
     watchWallet: z
       .string()
       .regex(/^0x[a-fA-F0-9]{40}$/)

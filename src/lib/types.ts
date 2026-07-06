@@ -375,6 +375,13 @@ export interface UserPrefs {
   killSwitch: boolean;
   scannersEnabled: boolean;
   paperStartingCash: number;
+  /**
+   * USER-DECLARED live bankroll (USD). The app holds no keys and cannot
+   * read venue balances, so this is an assertion, not a measurement — used
+   * only as the risk engine's live cash/sizing ceiling. $0 (default) keeps
+   * every live BUY fail-closed.
+   */
+  liveDeclaredCashUsd: number;
   /** Polygon address used for read-only wallet analytics (no keys) */
   watchWallet?: string;
   /** automated-trading policy & envelope */

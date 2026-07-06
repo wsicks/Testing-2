@@ -288,6 +288,8 @@ export interface AlphaOutcome {
    * wallet with positive forward evidence.
    */
   walletSign?: 1 | -1;
+  /** canonical alpha category at signal time (rows outlive registry entries) */
+  category?: string;
   createdAt: number;
   buckets: Partial<Record<DecayBucketKey, DecayBucket>>;
 }

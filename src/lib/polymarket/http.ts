@@ -70,6 +70,37 @@ export async function getJson<T>(
   }
 }
 
+/** POST + JSON body variant of getJson — same timeout/error/latency plumbing */
+export async function postJson<T>(
+  url: string,
+  body: unknown,
+  opts: HttpOpts = {},
+): Promise<T> {
+  const fetchFn = opts.fetchFn ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
+  const t0 = Date.now();
+  try {
+    const res = await fetchFn(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new PolymarketApiError(`HTTP ${res.status} from ${url}`, url, res.status);
+    }
+    return (await res.json()) as T;
+  } catch (err) {
+    if (err instanceof PolymarketApiError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new PolymarketApiError(`Request failed: ${msg}`, url);
+  } finally {
+    clearTimeout(timer);
+    latencyHook?.(upstreamLabel(url), Date.now() - t0);
+  }
+}
+
 export function qs(params: Record<string, string | number | boolean | undefined>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {

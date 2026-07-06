@@ -134,10 +134,15 @@ async function computeLivePortfolio(): Promise<PortfolioState> {
   const store = await getStore();
   const settings = await store.getSettings();
   const wallet = settings.watchWallet || process.env.NEXT_PUBLIC_WATCH_WALLET;
+  // live cash is USER-DECLARED (the app holds no keys and cannot read venue
+  // balances). Default $0 keeps every live BUY fail-closed until the user
+  // explicitly asserts a bankroll in Settings → Risk — labeled as declared
+  // there, and used ONLY as the risk engine's sizing/cash ceiling.
+  const declaredCash = Math.max(0, settings.liveDeclaredCashUsd ?? 0);
   const empty: PortfolioState = {
     mode: "live",
-    cash: 0,
-    totalValue: 0,
+    cash: declaredCash,
+    totalValue: declaredCash,
     exposure: 0,
     positions: [],
     exposureByMarket: {},
@@ -180,7 +185,7 @@ async function computeLivePortfolio(): Promise<PortfolioState> {
     }
     return {
       ...empty,
-      totalValue: Number(exposure.toFixed(2)),
+      totalValue: Number((exposure + declaredCash).toFixed(2)),
       exposure: Number(exposure.toFixed(2)),
       positions,
       exposureByMarket,

@@ -17,7 +17,7 @@ import { walletIntelInfo } from "@/server/alpha/walletRadar";
 import { getAttention } from "@/server/alpha/attention";
 import { allOutcomes } from "@/server/alpha/outcomes";
 import { listArbPairs } from "@/server/alpha/arbExecutor";
-import { confluenceMatrix, driftByPriceProfile } from "@/lib/alpha/evidenceLab";
+import { categoryHalfLives, confluenceMatrix, driftByPriceProfile } from "@/lib/alpha/evidenceLab";
 import { strategyHitRates } from "@/lib/alpha/hitRate";
 import { listErrors } from "@/server/errorLog";
 import { getStore } from "@/server/store";
@@ -43,6 +43,7 @@ export async function GET() {
   // measured per-strategy win rates (1h horizon) + Wilson floors — the same
   // numbers the autopilot hit-rate governor gates on
   const hitRates = strategyHitRates(outcomes);
+  const halfLives = categoryHalfLives(outcomes);
   const runtimeErrors = (await listErrors()).slice(0, 30);
   // complement-arb ledger: discounts locked at entry (arithmetic, not P&L
   // forecasts) — reported with pair counts and unwind honesty
@@ -72,6 +73,7 @@ export async function GET() {
     confluence,
     driftProfile,
     hitRates,
+    halfLives,
     runtimeErrors,
     arb,
     researchAgentPrompt: RESEARCH_AGENT_PROMPT,

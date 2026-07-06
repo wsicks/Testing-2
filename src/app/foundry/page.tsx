@@ -336,6 +336,29 @@ export default function FoundryPage() {
             <p className="pt-0.5 text-3xs text-ink-faint">{data?.driftProfile.note}</p>
           </div>
         </div>
+        <div className="border-t border-line/60 pt-1">
+          <div className="label">narrative half-life — per-category repricing speed (n ≥ 15 real 24h moves)</div>
+          {!data?.halfLives.length ? (
+            <p className="text-3xs text-ink-faint">
+              accumulating — needs categories with ≥15 outcomes where a real
+              (≥1c) 24h move followed the signal; sets honest per-category
+              horizons instead of one global constant
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 pt-0.5 text-2xs">
+              {data.halfLives.map((h) => (
+                <span key={h.category}>
+                  <span className="label">{h.category}</span>{" "}
+                  <Badge variant={h.speed === "minutes" ? "warn" : h.speed === "hours" ? "accent" : "default"}>{h.speed}</Badge>{" "}
+                  <Num className="text-ink-faint">
+                    {h.share5m !== undefined ? `${(h.share5m * 100).toFixed(0)}%@5m · ` : ""}
+                    {(h.share1h * 100).toFixed(0)}%@1h · n={h.n}
+                  </Num>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </Panel>
 
       <Panel title="measured win rates — what the governor gates on">

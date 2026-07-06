@@ -109,6 +109,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   killSwitch: false,
   scannersEnabled: true,
   paperStartingCash: 10_000,
+  liveDeclaredCashUsd: 0, // $0 = every live BUY stays fail-closed
   autopilot: DEFAULT_AUTOPILOT,
   alpha: DEFAULT_ALPHA,
   // public data on; paper on; live LOCKED — independently per venue
