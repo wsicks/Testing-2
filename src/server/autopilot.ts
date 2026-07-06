@@ -352,13 +352,21 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
           ? marketMap.get(cand.proposal.conditionId)?.endDate
           : undefined;
         const executed = await executeEntry(cand.proposal, cand.strategy, cand.signal, config.mode, endDate);
-        if (executed) {
+        if (executed.ok) {
           entries += 1;
           s.entryTs.push(Date.now());
           s.session.trades += 1;
+          // ledger accrues what actually DEPLOYED (paper IOC may fill less
+          // than proposed); live intents accrue the proposal since fills
+          // aren't tracked — the conservative direction for a budget
           s.session.notionalUsd = Number(
-            (s.session.notionalUsd + cand.proposal.price * cand.proposal.size).toFixed(2),
+            (s.session.notionalUsd + executed.filledNotionalUsd).toFixed(2),
           );
+          // refresh exposure synchronously so the NEXT candidate's risk
+          // check sees this entry's cash/exposure, not the pre-fill snapshot
+          await getExposure(config.mode === "live" ? "live" : "paper", {
+            forceFresh: true,
+          }).catch(() => {});
         }
       }
       s.entryTs = s.entryTs.filter((t) => Date.now() - t < 3_600_000);
@@ -396,7 +404,7 @@ async function executeEntry(
   signal: SignalResult,
   mode: "observe" | "paper" | "live" | "off",
   endDate?: string,
-): Promise<boolean> {
+): Promise<{ ok: boolean; filledNotionalUsd: number }> {
   const base = {
     conditionId: proposal.conditionId,
     tokenId: proposal.tokenId,
@@ -424,7 +432,7 @@ async function executeEntry(
       reason: `OBSERVE — would ${proposal.side} ${proposal.size} ${proposal.outcome} @ ${(proposal.price * 100).toFixed(1)}c (${strategy}, score ${signal.score})`,
     });
     publishFeed("autopilot_skip", `[observe] would enter ${proposal.marketTitle?.slice(0, 50)} ${proposal.outcome} @ ${(proposal.price * 100).toFixed(1)}c`, {});
-    return false;
+    return { ok: false, filledNotionalUsd: 0 };
   }
 
   if (mode === "live") {
@@ -436,7 +444,7 @@ async function executeEntry(
         marketQuestion: proposal.marketTitle,
         reason: "live autopilot not ARMED — entry withheld",
       });
-      return false;
+      return { ok: false, filledNotionalUsd: 0 };
     }
     // Alpha Foundry gate: only PROMOTED features (prosecutor pass + human
     // approval) may ever route to live — experimental/paper strategies are
@@ -451,7 +459,7 @@ async function executeEntry(
         marketQuestion: proposal.marketTitle,
         reason: `strategy '${strategy}' is not PROMOTED in the Alpha Foundry — experimental signals never trade live`,
       });
-      return false;
+      return { ok: false, filledNotionalUsd: 0 };
     }
     const { intent, assessment } = await createLiveIntent({ ...base, mode: "live" });
     if (intent.status === "rejected") {
@@ -463,7 +471,7 @@ async function executeEntry(
         approved: false,
         reason: `live intent rejected: ${intent.error ?? assessment.reasons[0] ?? "risk"}`,
       });
-      return false;
+      return { ok: false, filledNotionalUsd: 0 };
     }
     const confirmed = await confirmLiveIntent(intent.id, undefined, { autopilotArmed: true });
     record({
@@ -506,9 +514,10 @@ async function executeEntry(
             : undefined,
       });
       await setManaged(managed);
-      return true;
+      // live fills aren't tracked — accrue the proposal notional (conservative)
+      return { ok: true, filledNotionalUsd: proposal.price * proposal.size };
     }
-    return false;
+    return { ok: false, filledNotionalUsd: 0 };
   }
 
   // paper: place, then enforce IOC semantics — manage only what filled now
@@ -523,7 +532,7 @@ async function executeEntry(
       reason: `risk engine rejected: ${res.assessment.reasons.find((r) => r.startsWith("BLOCKED")) ?? "see checks"}`,
     });
     publishFeed("autopilot_skip", `[risk] blocked ${proposal.marketTitle?.slice(0, 50)} — ${res.assessment.reasons[0]?.slice(0, 70)}`, { severity: "warn" });
-    return false;
+    return { ok: false, filledNotionalUsd: 0 };
   }
   let order = res.order;
   if (order.filledSize < order.size && ["open", "partially_filled", "created"].includes(order.status)) {
@@ -538,7 +547,7 @@ async function executeEntry(
       marketQuestion: proposal.marketTitle,
       reason: "no immediate fill at limit (IOC) — order canceled",
     });
-    return false;
+    return { ok: false, filledNotionalUsd: 0 };
   }
   const managed = await getManaged();
   // carry the signal's mechanical exit plan (ECL: 50%/85% edge capture) —
@@ -578,7 +587,10 @@ async function executeEntry(
     reason: `filled ${order.filledSize}/${proposal.size} @ ${(100 * (order.avgFillPrice ?? proposal.price)).toFixed(1)}c (${strategy}, score ${signal.score})`,
   });
   publishFeed("autopilot_entry", `[paper] BUY ${order.filledSize} ${proposal.outcome} @ ${(100 * (order.avgFillPrice ?? proposal.price)).toFixed(1)}c — ${proposal.marketTitle?.slice(0, 45)} (${strategy})`, {});
-  return true;
+  return {
+    ok: true,
+    filledNotionalUsd: order.filledSize * (order.avgFillPrice ?? proposal.price),
+  };
 }
 
 async function executeExit(

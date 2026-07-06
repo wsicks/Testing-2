@@ -487,6 +487,63 @@ export async function confirmLiveIntent(
     });
     return next;
   }
+  // RE-RUN the full risk assessment at confirm time: the creation-time
+  // evaluation may be minutes old — price, spread, exposure and the daily
+  // loss budget have all moved on. SELLs are treated as exits (flattening a
+  // live position must always be possible; microstructure blocks downgrade
+  // to warnings); BUYs fail CLOSED, including when the market context
+  // itself can't be rebuilt.
+  if (intent.side === "BUY") {
+    let reassessed: RiskAssessment | undefined;
+    try {
+      const ctxBody: PlaceOrderBody = {
+        mode: "live",
+        conditionId: intent.conditionId,
+        tokenId: intent.tokenId,
+        outcome: intent.outcome,
+        side: intent.side,
+        orderType: intent.orderType,
+        price: intent.price,
+        size: intent.size,
+        origin: intent.origin,
+      };
+      const { market, book } = await marketContext(ctxBody);
+      const exposure = await getExposure("live", {
+        maxAgeMs: settings.staleDataMaxSecs * 1000,
+      });
+      if (!exposure.stale) {
+        reassessed = measureSync("hot.risk_check", () =>
+          evaluateTrade({
+            proposal: toProposal(ctxBody, market),
+            portfolio: exposure.state,
+            settings,
+            market,
+            book,
+          }),
+        );
+      }
+    } catch {
+      /* reassessed stays undefined → rejected below */
+    }
+    if (!reassessed?.approved) {
+      const why =
+        reassessed?.reasons.filter((r) => r.startsWith("BLOCKED")).join("; ") ||
+        "confirm-time risk re-assessment unavailable (stale exposure or market context failed) — re-preview";
+      const next: LiveOrderIntent = {
+        ...intent,
+        status: "rejected",
+        error: `confirm-time re-check failed: ${why}`,
+        updatedAt: Date.now(),
+      };
+      await store.updateIntent(next);
+      await audit("risk", "live_intent_rejected", `LIVE intent ${id} rejected at confirm-time re-check: ${why}`, {
+        severity: "warn",
+        feedType: "risk_check_failed",
+      });
+      return next;
+    }
+  }
+
   const needsTyped =
     intent.price * intent.size >= settings.typedConfirmThresholdUsd;
   if (

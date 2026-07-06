@@ -9,7 +9,7 @@ import {
   scoreWallet,
   walletIntelInfo,
 } from "@/server/alpha/walletRadar";
-import { listWallets, upsertWallet } from "@/server/alpha/repo";
+import { listWallets, upsertWallet, withWalletsLock } from "@/server/alpha/repo";
 import { audit } from "@/server/audit";
 
 export const dynamic = "force-dynamic";
@@ -68,17 +68,23 @@ export async function POST(req: NextRequest) {
         manuallyAdded: true,
         existing,
       });
-      await upsertWallet(record);
+      await withWalletsLock(() => upsertWallet(record));
       await audit("user", "wallet_tracked", `Manually tracking public wallet ${body.wallet}`, {});
       return NextResponse.json({ wallet: record });
     }
     case "archive": {
-      const wallets = await listWallets();
-      const w = wallets.find((x) => x.walletId === body.wallet.toLowerCase());
-      if (!w) return NextResponse.json({ error: "unknown wallet" }, { status: 404 });
-      w.status = "archived";
-      await upsertWallet(w);
-      return NextResponse.json({ wallet: w });
+      // read-modify-write under the wallets lock — an archive landing while
+      // a foundry wallet task is mid-flight must not be clobbered
+      const archived = await withWalletsLock(async () => {
+        const wallets = await listWallets();
+        const w = wallets.find((x) => x.walletId === body.wallet.toLowerCase());
+        if (!w) return null;
+        w.status = "archived";
+        await upsertWallet(w);
+        return w;
+      });
+      if (!archived) return NextResponse.json({ error: "unknown wallet" }, { status: 404 });
+      return NextResponse.json({ wallet: archived });
     }
   }
 }

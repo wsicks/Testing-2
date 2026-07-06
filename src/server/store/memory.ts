@@ -47,7 +47,10 @@ const EMPTY: Data = {
   kv: {},
 };
 
-const CAPS = { fills: 5000, signals: 1500, audit: 5000, portfolioSnapshots: 5000 };
+const CAPS = { fills: 5000, signals: 1500, audit: 5000, portfolioSnapshots: 5000, orders: 3000, intents: 1000 };
+
+/** order/intent statuses that are DONE — only these may ever be evicted */
+const TERMINAL_STATUSES = new Set(["filled", "canceled", "rejected", "expired"]);
 
 export class MemoryStore implements Store {
   private data: Data;
@@ -124,6 +127,13 @@ export class MemoryStore implements Store {
 
   async createOrder(order: PaperOrder): Promise<PaperOrder> {
     this.data.orders.unshift(order);
+    // cap growth by evicting the OLDEST terminal rows only — open/working
+    // orders are never dropped (settlement and cancel-all must see them)
+    if (this.data.orders.length > CAPS.orders) {
+      for (let i = this.data.orders.length - 1; i >= 0 && this.data.orders.length > CAPS.orders; i--) {
+        if (TERMINAL_STATUSES.has(this.data.orders[i].status)) this.data.orders.splice(i, 1);
+      }
+    }
     this.persist();
     return order;
   }
@@ -148,6 +158,11 @@ export class MemoryStore implements Store {
 
   async createIntent(intent: LiveOrderIntent): Promise<LiveOrderIntent> {
     this.data.intents.unshift(intent);
+    if (this.data.intents.length > CAPS.intents) {
+      for (let i = this.data.intents.length - 1; i >= 0 && this.data.intents.length > CAPS.intents; i--) {
+        if (TERMINAL_STATUSES.has(this.data.intents[i].status)) this.data.intents.splice(i, 1);
+      }
+    }
     this.persist();
     return intent;
   }

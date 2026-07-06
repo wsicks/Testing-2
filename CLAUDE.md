@@ -4,6 +4,15 @@ Next.js 16 App Router · React 19 · TS strict · Tailwind · Prisma 6 (NOT 7 �
 v7 removed the classic datasource `url`) · zod 4 · vitest 4 ·
 lightweight-charts 5 (`chart.addSeries(CandlestickSeries, opts)` API).
 
+## Error-log-first habit (standing instruction)
+
+At the START of every working session in this repo: read the open rows in
+`ERRORLOG.md` and (when a dev server is up) `GET /api/errors`. Fix what is
+fixable alongside the session's task; every fix flips its row to `fixed`
+with the commit hash, and every new defect found gets a new row. The log is
+the single source of truth for known defects — never fix silently, never
+delete rows.
+
 ## Verify loop (run all before any commit)
 
 ```bash

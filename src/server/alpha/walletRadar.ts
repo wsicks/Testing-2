@@ -45,6 +45,7 @@ import {
   saveWallets,
   saveWalletTrades,
   upsertWallet,
+  withWalletsLock,
 } from "./repo";
 
 // ── In-memory intel cache (scanner reads this; never blocks the scan) ────────
@@ -305,7 +306,7 @@ export async function discoverWallets(
       scored += 1;
       if (rejected) rejectedCount += 1;
       else tracked += 1;
-      await upsertWallet(record);
+      await withWalletsLock(() => upsertWallet(record));
       await politeDelay(250);
     } catch {
       /* skip wallets whose data fails to load */
@@ -386,16 +387,19 @@ export async function refreshWalletIntel(maxWallets = 25): Promise<number> {
       }
       s.intel = intel;
       s.intelBuiltAt = now;
-      // persist lastIntelAt on a FRESH read-modify-write: mutating the rows
-      // fetched before the (minutes-long) network loop would lose any
-      // concurrent update (e.g. forward-evidence writes), and on the Prisma
-      // store the early objects are detached parses whose mutations vanish
-      const latest = await listWallets();
-      for (const id of refreshedIds) {
-        const row = latest.find((x) => x.walletId === id);
-        if (row) row.lastIntelAt = now;
-      }
-      await saveWallets(latest);
+      // persist lastIntelAt on a FRESH read-modify-write UNDER THE LOCK:
+      // mutating the rows fetched before the (minutes-long) network loop
+      // would lose any concurrent update (e.g. forward-evidence writes), and
+      // on the Prisma store the early objects are detached parses whose
+      // mutations vanish
+      await withWalletsLock(async () => {
+        const latest = await listWallets();
+        for (const id of refreshedIds) {
+          const row = latest.find((x) => x.walletId === id);
+          if (row) row.lastIntelAt = now;
+        }
+        await saveWallets(latest);
+      });
       return intel.size;
     });
   } finally {
@@ -413,19 +417,23 @@ export async function recordWalletForward(
   drift1h: number,
   drift5s: number | undefined,
 ): Promise<void> {
-  const wallets = await listWallets();
-  const w = wallets.find((x) => x.walletId === walletId);
-  if (!w) return;
-  const f = w.forward ?? { samples: 0, avgDrift1h: 0, avgDrift5s: 0, updatedAt: 0 };
-  const n = f.samples + 1;
-  w.forward = {
-    samples: n,
-    avgDrift1h: f.avgDrift1h + (drift1h - f.avgDrift1h) / n,
-    avgDrift5s:
-      drift5s !== undefined ? f.avgDrift5s + (drift5s - f.avgDrift5s) / n : f.avgDrift5s,
-    updatedAt: Date.now(),
-  };
-  await saveWallets(wallets);
+  // whole read-modify-write under the wallets lock — a foundry wallet task
+  // finishing between our read and save must not erase this sample (E-034)
+  await withWalletsLock(async () => {
+    const wallets = await listWallets();
+    const w = wallets.find((x) => x.walletId === walletId);
+    if (!w) return;
+    const f = w.forward ?? { samples: 0, avgDrift1h: 0, avgDrift5s: 0, updatedAt: 0 };
+    const n = f.samples + 1;
+    w.forward = {
+      samples: n,
+      avgDrift1h: f.avgDrift1h + (drift1h - f.avgDrift1h) / n,
+      avgDrift5s:
+        drift5s !== undefined ? f.avgDrift5s + (drift5s - f.avgDrift5s) / n : f.avgDrift5s,
+      updatedAt: Date.now(),
+    };
+    await saveWallets(wallets);
+  });
 }
 
 /** re-score all tracked wallets (daily) — refreshes labels and skill tables */
@@ -442,17 +450,19 @@ export async function rescoreTrackedWallets(max = 25): Promise<number> {
         pseudonym: w.pseudonym,
         existing: w,
       });
-      // merge live-updated fields from a FRESH read: the loop spans minutes
-      // of network I/O, and forward evidence recorded meanwhile must not be
-      // reverted by this stale snapshot
-      const fresh = (await listWallets()).find((x) => x.walletId === w.walletId);
-      if (fresh?.forward && (!record.forward || fresh.forward.updatedAt > (record.forward.updatedAt ?? 0))) {
-        record.forward = fresh.forward;
-      }
-      if (fresh?.lastIntelAt && fresh.lastIntelAt > (record.lastIntelAt ?? 0)) {
-        record.lastIntelAt = fresh.lastIntelAt;
-      }
-      await upsertWallet(record);
+      // merge live-updated fields from a FRESH read UNDER THE LOCK: the loop
+      // spans minutes of network I/O, and forward evidence recorded meanwhile
+      // must not be reverted by this stale snapshot
+      await withWalletsLock(async () => {
+        const fresh = (await listWallets()).find((x) => x.walletId === w.walletId);
+        if (fresh?.forward && (!record.forward || fresh.forward.updatedAt > (record.forward.updatedAt ?? 0))) {
+          record.forward = fresh.forward;
+        }
+        if (fresh?.lastIntelAt && fresh.lastIntelAt > (record.lastIntelAt ?? 0)) {
+          record.lastIntelAt = fresh.lastIntelAt;
+        }
+        await upsertWallet(record);
+      });
       n += 1;
       await politeDelay(250);
     } catch {

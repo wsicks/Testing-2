@@ -114,7 +114,19 @@ export async function GET(
     if (!internal || !Number.isFinite(from) || !Number.isFinite(to)) {
       return NextResponse.json({ s: "error", errmsg: "bad params" });
     }
-    const candles = await getCandles(internal, resolution, from, to);
+    // upstream failures must speak TradingView's protocol ({s:"error"}),
+    // never leak as an HTTP 500 the datafeed can't parse; clamp the span to
+    // what one upstream request can serve
+    let candles: Awaited<ReturnType<typeof getCandles>>;
+    try {
+      const clampedFrom = Math.max(from, to - 300 * resolution * 60);
+      candles = await getCandles(internal, resolution, clampedFrom, to);
+    } catch (err) {
+      return NextResponse.json({
+        s: "error",
+        errmsg: err instanceof Error ? err.message.slice(0, 120) : "candles unavailable",
+      });
+    }
     if (!candles.length) return NextResponse.json({ s: "no_data" });
     return NextResponse.json({
       s: "ok",

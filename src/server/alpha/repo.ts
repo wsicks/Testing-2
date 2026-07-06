@@ -85,6 +85,26 @@ export async function upsertSource(row: SourceRecord): Promise<void> {
 
 // ── Wallets ──────────────────────────────────────────────────────────────────
 
+/**
+ * In-process mutex over wallet-blob read-modify-writes. Both schedulers
+ * (scanner: forward-evidence flush; foundry: intel/rescore/discovery) and
+ * the API routes write this blob; each already re-reads before write-back,
+ * but the read→write pairs were not mutually serialized, leaving a
+ * milliseconds-wide lost-update window (E-034). Callers wrap their WHOLE
+ * read-modify-write in withWalletsLock; locked sections must never nest.
+ */
+const wl = globalThis as unknown as { __eqWalletsLock?: Promise<unknown> };
+
+export function withWalletsLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = wl.__eqWalletsLock ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  wl.__eqWalletsLock = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 export const listWallets = () => readList<TrackedWalletRecord>(KEYS.wallets);
 export const saveWallets = (rows: TrackedWalletRecord[]) =>
   writeList(KEYS.wallets, rows, CAPS.wallets);
