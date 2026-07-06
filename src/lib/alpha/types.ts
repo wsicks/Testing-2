@@ -382,4 +382,10 @@ export interface AlphaSettings {
   minWalletForwardSamples: number;
   /** hard cap on any experimental/mimic test order */
   testOrderUsd: number;
+  /**
+   * complement-arbitrage executor (paper book only): when the YES and NO
+   * books of one market misprice so yesAsk+noAsk < $1 net of fees, buy both
+   * sides — profit is locked at resolution regardless of outcome
+   */
+  arbEnabled: boolean;
 }

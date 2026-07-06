@@ -31,6 +31,7 @@ import { logError } from "./errorLog";
 import { pushSignals } from "./hotpath/signalCache";
 import { getBaseline, updateBaselines } from "./hotpath/baselines";
 import { swapBookSnapshot } from "./hotpath/bookMemory";
+import { runArbExecutor } from "./alpha/arbExecutor";
 import { runMimicExecutor } from "./alpha/mimic";
 import { trackSignalOutcomes } from "./alpha/outcomes";
 import { getWalletIntel } from "./alpha/walletRadar";
@@ -239,6 +240,20 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
     } catch (err) {
       logError("scanner:outcomes_mimic", err);
       console.error("[eventquant] alpha outcome/mimic step failed:", err);
+    }
+    // complement arbitrage: math-locked YES+NO pairs when both books sum
+    // under $1 net of fees (paper book; isolated like every other step)
+    try {
+      const arb = await runArbExecutor(markets);
+      if (arb.paired > 0) {
+        publishFeed(
+          "order_filled",
+          `Complement arb: ${arb.paired} pair(s), $${arb.lockedNetUsd.toFixed(2)} locked at resolution (paper)`,
+          {},
+        );
+      }
+    } catch (err) {
+      logError("arb:executor", err);
     }
 
     // housekeeping piggybacked on the scan tick (settlement is mutex-guarded).

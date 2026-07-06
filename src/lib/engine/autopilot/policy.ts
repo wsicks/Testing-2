@@ -52,7 +52,32 @@ export interface PolicyInput {
   session: { trades: number; notionalUsd: number; tradesLastHour: number };
   /** measured per-strategy hit rates from the outcome archive */
   hitRates?: Map<string, StrategyHitRate>;
+  /**
+   * strategies whose latest walk-forward backtest measured NEGATIVE net
+   * expectancy with zero positive folds — blocked from entries until a
+   * newer backtest passes (evidence outranks enablement)
+   */
+  backtestBlocked?: Set<string>;
   now: number;
+}
+
+/**
+ * maker-style entry price: post INSIDE the spread (rounded to the tick)
+ * instead of crossing to the ask. On a 2c-spread book this converts ~1c of
+ * paid friction per trade into captured spread — the largest single lever
+ * on measured expectancy. Falls back to the ask when the spread leaves no
+ * room to post inside it.
+ */
+export function makerEntryPrice(
+  bid: number | undefined,
+  ask: number | undefined,
+  tickSize = 0.01,
+): number | undefined {
+  if (ask === undefined) return undefined;
+  if (bid === undefined || ask - bid <= tickSize + 1e-9) return ask;
+  const mid = (bid + ask) / 2;
+  const ticked = Math.round(mid / tickSize) * tickSize;
+  return Number(Math.min(ask - tickSize, Math.max(bid + tickSize, ticked)).toFixed(3));
 }
 
 export interface PolicyOutput {
@@ -109,6 +134,15 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       skips.push(skip("signal expired before evaluation", sig));
       continue;
     }
+    if (input.backtestBlocked?.has(sig.strategy)) {
+      skips.push(
+        skip(
+          `backtest gate: '${sig.strategy}' measured negative net expectancy in its walk-forward replay (0 positive folds) — entries blocked until a newer backtest passes`,
+          sig,
+        ),
+      );
+      continue;
+    }
     const hr = input.hitRates?.get(sig.strategy);
     if (hr && hr.n >= GOVERNOR_MIN_SAMPLES && hr.hitRate < GOVERNOR_MIN_HIT_RATE) {
       skips.push(
@@ -143,16 +177,44 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       continue;
     }
 
-    // side & price: buy the signaled outcome token at (near) the ask
+    // per-market NET economics: a strategy with measured evidence must
+    // clear THIS market's friction, not just be non-terrible on average —
+    // +0.8c of measured drift entered on a 3c-spread book is a losing trade
+    const friction =
+      (market.spread ?? 0.02) / 2 +
+      input.settings.feeRateBps / 10_000 +
+      input.settings.slippageBps / 10_000;
+    if (hr && hr.n >= GOVERNOR_MIN_SAMPLES && hr.avgDrift1h <= friction) {
+      skips.push(
+        skip(
+          `net economics: measured 1h drift ${(hr.avgDrift1h * 100).toFixed(2)}c does not clear this market's friction ${(friction * 100).toFixed(2)}c`,
+          sig,
+        ),
+      );
+      continue;
+    }
+
+    // side & price: buy the signaled outcome token. Maker style posts
+    // INSIDE the spread (captures ~half of it); taker crosses to the ask.
     const buyYes = sig.direction === "BUY_YES";
     const tokenId = buyYes ? market.yesTokenId : market.noTokenId;
     if (!tokenId) continue;
-    const yesAsk = market.bestAsk ?? market.yesPrice;
-    const price = buyYes
-      ? yesAsk
+    const tick = market.tickSize ?? 0.01;
+    // the traded token's own bid/ask (NO book implied by the YES book)
+    const tokenBid = buyYes
+      ? market.bestBid
+      : market.bestAsk !== undefined
+        ? 1 - market.bestAsk
+        : undefined;
+    const tokenAsk = buyYes
+      ? market.bestAsk ?? market.yesPrice
       : market.bestBid !== undefined
-        ? 1 - market.bestBid // NO ask implied by the YES bid
+        ? 1 - market.bestBid
         : market.noPrice;
+    const price =
+      config.entryStyle === "maker"
+        ? makerEntryPrice(tokenBid, tokenAsk, tick)
+        : tokenAsk;
     if (price === undefined || price <= 0.02 || price >= 0.98) {
       skips.push(skip("no viable entry price inside the tradable band", sig));
       continue;

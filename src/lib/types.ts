@@ -597,6 +597,14 @@ export interface AutopilotConfig {
   mode: AutopilotMode;
   /** strategies the policy may act on */
   enabledStrategies: string[];
+  /**
+   * maker = post INSIDE the spread and rest briefly (capture ~half the
+   * spread instead of paying it — friction is the main measured PnL leak);
+   * taker = cross to the ask for an immediate fill
+   */
+  entryStyle: "maker" | "taker";
+  /** minutes a maker entry may rest before the remainder is canceled */
+  makerRestMin: number;
   /** minimum signal score to consider an entry */
   minScore: number;
   /** notional per entry, USD (bounded by risk-engine caps) */

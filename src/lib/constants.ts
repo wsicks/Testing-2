@@ -46,7 +46,12 @@ export const APP_NAME = "POLYQUANT";
  */
 export const DEFAULT_AUTOPILOT: AutopilotConfig = {
   mode: "off",
-  enabledStrategies: ["dislocation", "microstructure", "price_movement", "favorite_convergence"],
+  // dislocation removed from defaults: its walk-forward backtest measured
+  // -0.50c/entry after friction (0/4 folds positive) — the backtest gate
+  // blocks it anyway, and defaults should not contradict the evidence
+  enabledStrategies: ["microstructure", "price_movement", "favorite_convergence"],
+  entryStyle: "maker",
+  makerRestMin: 5,
   minScore: 60,
   perTradeUsd: 25,
   maxOpenPositions: 5,
@@ -75,6 +80,7 @@ export const DEFAULT_ALPHA: AppSettings["alpha"] = {
   minWalletSampleSize: 20,
   minWalletForwardSamples: 10,
   testOrderUsd: 25,
+  arbEnabled: true, // paper book only; math-locked pairs, never directional
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

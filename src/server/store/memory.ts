@@ -116,7 +116,17 @@ export class MemoryStore implements Store {
   }
 
   async getSettings(): Promise<AppSettings> {
-    return { ...DEFAULT_SETTINGS, ...this.data.settings };
+    // deep-merge the nested config objects: a settings blob persisted before
+    // a new field existed (alpha.arbEnabled, autopilot.entryStyle, …) must
+    // inherit that field's default, not silently drop to undefined
+    const s = this.data.settings as Partial<AppSettings> | undefined;
+    return {
+      ...DEFAULT_SETTINGS,
+      ...s,
+      alpha: { ...DEFAULT_SETTINGS.alpha, ...s?.alpha },
+      autopilot: { ...DEFAULT_SETTINGS.autopilot, ...s?.autopilot },
+      venues: { ...DEFAULT_SETTINGS.venues, ...s?.venues },
+    };
   }
 
   async patchSettings(patch: Partial<AppSettings>): Promise<AppSettings> {

@@ -157,14 +157,26 @@ describe("entry policy", () => {
     expect(skips.some((s) => s.reason.includes("notional budget"))).toBe(true);
   });
 
-  it("buys the NO token for BUY_NO signals at the implied NO ask", () => {
+  it("buys the NO token for BUY_NO signals at the implied NO ask (taker)", () => {
     const { candidates } = decideEntries(
-      policyInput({ signals: [makeSignal({ direction: "BUY_NO", meta: { modelWinProb: 0.6 } })] }),
+      policyInput({
+        signals: [makeSignal({ direction: "BUY_NO", meta: { modelWinProb: 0.6 } })],
+        config: { ...DEFAULT_AUTOPILOT, mode: "paper", enabledStrategies: ["dislocation"], entryStyle: "taker" },
+      }),
     );
     expect(candidates).toHaveLength(1);
     expect(candidates[0].proposal.tokenId).toBe("tok-no");
     // NO ask = 1 - YES bid = 1 - 0.54
     expect(candidates[0].proposal.price).toBeCloseTo(0.46, 3);
+  });
+
+  it("maker BUY_NO posts inside the implied NO spread", () => {
+    const { candidates } = decideEntries(
+      policyInput({ signals: [makeSignal({ direction: "BUY_NO", meta: { modelWinProb: 0.6 } })] }),
+    );
+    expect(candidates).toHaveLength(1);
+    // implied NO book: bid 1-0.56=0.44, ask 1-0.54=0.46 → posts at 0.45
+    expect(candidates[0].proposal.price).toBeCloseTo(0.45, 3);
   });
 });
 

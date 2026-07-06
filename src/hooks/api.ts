@@ -519,6 +519,12 @@ export interface FoundryResponse {
   driftProfile: import("@/lib/alpha/evidenceLab").DriftProfile;
   hitRates: import("@/lib/alpha/hitRate").StrategyHitRate[];
   runtimeErrors: import("@/server/errorLog").ErrorLogEntry[];
+  arb: {
+    pairs: number;
+    unwound: number;
+    lockedNetUsd: number;
+    recent: import("@/server/alpha/arbExecutor").ArbPairRecord[];
+  };
   researchAgentPrompt: string;
 }
 

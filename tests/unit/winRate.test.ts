@@ -106,8 +106,10 @@ describe("hit-rate governor", () => {
   });
 
   it("boosts proven strategies above unproven ones in ranking", () => {
+    // drifts large enough that avg drift clears the market's friction —
+    // otherwise the net-economics gate (tested separately) blocks entries
     const proven = strategyHitRates(
-      Array.from({ length: 100 }, (_, i) => outcome("price_movement", i < 70 ? 0.02 : -0.02)),
+      Array.from({ length: 100 }, (_, i) => outcome("price_movement", i < 70 ? 0.05 : -0.02)),
     );
     const withEvidence = decideEntries(policyInput(new Map(proven.map((h) => [h.strategy, h]))));
     const withoutEvidence = decideEntries(policyInput(new Map()));

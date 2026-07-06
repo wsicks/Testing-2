@@ -55,7 +55,15 @@ export class PrismaStore implements Store {
 
   async getSettings(): Promise<AppSettings> {
     const stored = await this.getJsonSetting<Partial<AppSettings>>("app_settings");
-    return { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+    // deep-merge nested config objects so blobs persisted before a new field
+    // existed inherit its default instead of dropping to undefined
+    return {
+      ...DEFAULT_SETTINGS,
+      ...(stored ?? {}),
+      alpha: { ...DEFAULT_SETTINGS.alpha, ...stored?.alpha },
+      autopilot: { ...DEFAULT_SETTINGS.autopilot, ...stored?.autopilot },
+      venues: { ...DEFAULT_SETTINGS.venues, ...stored?.venues },
+    };
   }
 
   async patchSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -63,7 +71,13 @@ export class PrismaStore implements Store {
       (await this.getJsonSetting<Partial<AppSettings>>("app_settings")) ?? {};
     const next = { ...stored, ...patch };
     await this.setJsonSetting("app_settings", next);
-    return { ...DEFAULT_SETTINGS, ...next };
+    return {
+      ...DEFAULT_SETTINGS,
+      ...next,
+      alpha: { ...DEFAULT_SETTINGS.alpha, ...next.alpha },
+      autopilot: { ...DEFAULT_SETTINGS.autopilot, ...next.autopilot },
+      venues: { ...DEFAULT_SETTINGS.venues, ...next.venues },
+    };
   }
 
   // ── orders ────────────────────────────────────────────────────────────────

@@ -17,12 +17,14 @@
 import { mulberry32 } from "@/lib/rng";
 import { genId } from "@/lib/utils";
 import type {
+  AutopilotConfig,
   AutopilotDecision,
   AutopilotSession,
   AutopilotStatus,
   BanditArm,
   ManagedPosition,
   NormalizedMarket,
+  PaperOrder,
   SignalResult,
 } from "@/lib/types";
 import {
@@ -36,6 +38,7 @@ import { evaluateExit } from "@/lib/engine/autopilot/exits";
 import { classifyRegime, type Regime } from "@/lib/engine/micro/regime";
 import { strategyHitRates } from "@/lib/alpha/hitRate";
 import { allOutcomes } from "./alpha/outcomes";
+import { listFeatures } from "./alpha/repo";
 import { audit } from "./audit";
 import { publishFeed } from "./events";
 import {
@@ -52,7 +55,40 @@ import { getStore } from "./store";
 const KV_BANDIT = "autopilot:bandit";
 const KV_MANAGED = "autopilot:managed";
 const KV_DECISIONS = "autopilot:decisions";
+const KV_PENDING = "autopilot:pending";
 const ARM_PHRASE = "ARM LIVE AUTOPILOT";
+
+/**
+ * a maker entry resting in the book — tracked so every later fill is
+ * registered for exit management the moment it lands (an unfilled resting
+ * order that fills via settlement must never become an orphaned position)
+ */
+interface PendingEntry {
+  orderId: string;
+  tokenId: string;
+  conditionId?: string;
+  marketQuestion?: string;
+  outcome?: string;
+  strategy: string;
+  price: number;
+  size: number;
+  exitPlan?: { partialAt: number; fullAt: number };
+  endDate?: string;
+  placedAt: number;
+  restUntil: number;
+  /** shares already registered as a managed lot */
+  registeredFill: number;
+}
+
+async function getPending(): Promise<PendingEntry[]> {
+  const store = await getStore();
+  return (await store.getKV<PendingEntry[]>(KV_PENDING)) ?? [];
+}
+
+async function setPending(list: PendingEntry[]): Promise<void> {
+  const store = await getStore();
+  await store.setKV(KV_PENDING, list);
+}
 
 interface ApGlobal {
   session: AutopilotSession;
@@ -180,6 +216,75 @@ function isArmed(): boolean {
   return s.session.armedUntil !== undefined && Date.now() < s.session.armedUntil;
 }
 
+// ── pending maker entries ─────────────────────────────────────────────────────
+
+/** register newly-filled shares of a resting maker entry as a managed lot */
+async function registerPendingFill(p: PendingEntry, order: PaperOrder): Promise<number> {
+  const newFill = order.filledSize - p.registeredFill;
+  if (newFill <= 0) return 0;
+  const entry = order.avgFillPrice ?? p.price;
+  await registerManagedLot({
+    tokenId: p.tokenId,
+    conditionId: p.conditionId,
+    marketQuestion: p.marketQuestion,
+    outcome: p.outcome,
+    strategy: p.strategy,
+    mode: "paper",
+    entryPrice: entry,
+    size: newFill,
+    openedAt: Date.now(),
+    peakPrice: entry,
+    endDate: p.endDate,
+    exitPlan: p.exitPlan,
+  });
+  p.registeredFill = order.filledSize;
+  const s = state();
+  s.session.notionalUsd = Number((s.session.notionalUsd + newFill * entry).toFixed(2));
+  record({
+    kind: "entry",
+    strategy: p.strategy,
+    conditionId: p.conditionId,
+    marketQuestion: p.marketQuestion,
+    side: "BUY",
+    price: entry,
+    size: newFill,
+    orderId: order.id,
+    approved: true,
+    reason: `maker rest filled ${newFill}/${p.size} @ ${(entry * 100).toFixed(1)}c (${p.strategy}) — lot registered for exit management`,
+  });
+  return newFill;
+}
+
+/**
+ * Sweep resting maker entries every tick: register fills the moment they
+ * land, cancel remainders whose rest window expired. Runs BEFORE the exit
+ * sweep so a fresh fill gets exit management in the same tick.
+ */
+async function sweepPendingEntries(): Promise<void> {
+  const pending = await getPending();
+  if (!pending.length) return;
+  const store = await getStore();
+  const still: PendingEntry[] = [];
+  for (const p of pending) {
+    try {
+      const order = await store.getOrder(p.orderId);
+      if (!order) continue; // vanished — nothing to manage
+      await registerPendingFill(p, order);
+      const terminal = ["filled", "canceled", "rejected", "expired"].includes(order.status);
+      if (terminal) continue;
+      if (Date.now() > p.restUntil) {
+        const canceled = await cancelOrder(order.id, "system");
+        if (canceled) await registerPendingFill(p, canceled); // last-moment fills
+        continue;
+      }
+      still.push(p);
+    } catch {
+      still.push(p); // transient store failure — retry next tick
+    }
+  }
+  await setPending(still);
+}
+
 // ── status ────────────────────────────────────────────────────────────────────
 
 export async function getAutopilotStatus(): Promise<AutopilotStatus> {
@@ -242,6 +347,10 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
     const { markets } = await getMarkets();
     const marketMap = new Map(markets.map((m) => [m.conditionId, m]));
     const marks = await priceLookup();
+
+    // ── 0) resting maker entries: register fresh fills BEFORE the exit
+    // sweep so a new lot gets exit management in this same tick ───────────
+    await sweepPendingEntries();
 
     // ── 1) exits first — risk-reducing, run even when the breaker is tripped ─
     let exits = 0;
@@ -324,6 +433,34 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
       const hitRates = new Map(
         strategyHitRates(await allOutcomes()).map((h) => [h.strategy, h]),
       );
+      // evidence outranks enablement: strategies whose latest walk-forward
+      // replay measured NEGATIVE net expectancy (0 positive folds) cannot
+      // enter until a newer backtest passes
+      const backtestBlocked = new Set(
+        (await listFeatures())
+          .filter(
+            (f) =>
+              f.lastBacktest &&
+              f.lastBacktest.avgNet <= 0 &&
+              f.lastBacktest.positiveFolds === 0,
+          )
+          .map((f) => f.id),
+      );
+      // resting maker entries occupy position slots and hold their market —
+      // the policy must see them or it double-enters the same market
+      const pendingAsManaged: ManagedPosition[] = (await getPending()).map((p) => ({
+        tokenId: p.tokenId,
+        conditionId: p.conditionId,
+        marketQuestion: p.marketQuestion,
+        outcome: p.outcome,
+        strategy: p.strategy,
+        mode: "paper",
+        entryPrice: p.price,
+        size: p.size,
+        openedAt: p.placedAt,
+        peakPrice: p.price,
+        endDate: p.endDate,
+      }));
       const { candidates, skips } = decideEntries({
         signals: recentSignals,
         markets: marketMap,
@@ -332,13 +469,14 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         settings,
         config,
         bandit,
-        managed,
+        managed: [...managed, ...pendingAsManaged],
         session: {
           trades: s.session.trades,
           notionalUsd: s.session.notionalUsd,
           tradesLastHour: s.session.tradesLastHour,
         },
         hitRates,
+        backtestBlocked,
         now: Date.now(),
       });
       // keep skip noise low: record at most 6 distinct skips per tick
@@ -351,7 +489,7 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         const endDate = cand.proposal.conditionId
           ? marketMap.get(cand.proposal.conditionId)?.endDate
           : undefined;
-        const executed = await executeEntry(cand.proposal, cand.strategy, cand.signal, config.mode, endDate);
+        const executed = await executeEntry(cand.proposal, cand.strategy, cand.signal, config, endDate);
         if (executed.ok) {
           entries += 1;
           s.entryTs.push(Date.now());
@@ -402,9 +540,10 @@ async function executeEntry(
   proposal: import("@/lib/types").TradeProposal,
   strategy: string,
   signal: SignalResult,
-  mode: "observe" | "paper" | "live" | "off",
+  config: AutopilotConfig,
   endDate?: string,
 ): Promise<{ ok: boolean; filledNotionalUsd: number }> {
+  const mode = config.mode;
   const base = {
     conditionId: proposal.conditionId,
     tokenId: proposal.tokenId,
@@ -535,11 +674,53 @@ async function executeEntry(
     return { ok: false, filledNotionalUsd: 0 };
   }
   let order = res.order;
-  if (order.filledSize < order.size && ["open", "partially_filled", "created"].includes(order.status)) {
+  const resting =
+    order.filledSize < order.size &&
+    ["open", "partially_filled", "created"].includes(order.status);
+  if (resting && config.entryStyle === "maker") {
+    // maker style: let the remainder REST inside the spread for the
+    // configured window — the pending sweep registers fills as they land
+    // and cancels whatever remains at expiry. This is the half-spread
+    // capture that taker entries pay away.
+    const pending = await getPending();
+    pending.push({
+      orderId: order.id,
+      tokenId: proposal.tokenId,
+      conditionId: proposal.conditionId,
+      marketQuestion: proposal.marketTitle,
+      outcome: proposal.outcome,
+      strategy,
+      price: proposal.price,
+      size: proposal.size,
+      exitPlan: (() => {
+        const pm = signal.meta?.exitPlan as { partialExitAt?: number; fullExitAt?: number } | undefined;
+        return typeof pm?.partialExitAt === "number" && typeof pm?.fullExitAt === "number"
+          ? { partialAt: pm.partialExitAt, fullAt: pm.fullExitAt }
+          : undefined;
+      })(),
+      endDate,
+      placedAt: Date.now(),
+      restUntil: Date.now() + config.makerRestMin * 60_000,
+      registeredFill: order.filledSize,
+    });
+    await setPending(pending);
+    record({
+      kind: "entry",
+      strategy,
+      conditionId: proposal.conditionId,
+      marketQuestion: proposal.marketTitle,
+      side: proposal.side,
+      price: proposal.price,
+      size: proposal.size,
+      orderId: order.id,
+      approved: true,
+      reason: `maker entry resting at ${(proposal.price * 100).toFixed(1)}c inside the spread (${order.filledSize}/${proposal.size} filled immediately, rest window ${config.makerRestMin}m, ${strategy})`,
+    });
+  } else if (resting) {
     const canceled = await cancelOrder(order.id, "system");
     if (canceled) order = canceled;
   }
-  if (order.filledSize <= 0) {
+  if (order.filledSize <= 0 && !(resting && config.entryStyle === "maker")) {
     record({
       kind: "skip",
       strategy,
@@ -548,6 +729,11 @@ async function executeEntry(
       reason: "no immediate fill at limit (IOC) — order canceled",
     });
     return { ok: false, filledNotionalUsd: 0 };
+  }
+  if (order.filledSize <= 0) {
+    // maker order fully resting: it occupies a slot (ok) but nothing has
+    // deployed yet — fills register through the pending sweep
+    return { ok: true, filledNotionalUsd: 0 };
   }
   const managed = await getManaged();
   // carry the signal's mechanical exit plan (ECL: 50%/85% edge capture) —

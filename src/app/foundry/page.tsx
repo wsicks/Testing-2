@@ -389,6 +389,34 @@ export default function FoundryPage() {
         </p>
       </Panel>
 
+      <Panel title={`complement arbitrage — profit locked at entry (${data?.arb.pairs ?? 0} pairs, paper)`}>
+        {!data?.arb.pairs ? (
+          <EmptyNote>
+            no cross-book mispricing captured yet — the executor verifies
+            both books live whenever gamma mids hint YES+NO &lt; $1 and pairs
+            only when the NET discount clears 0.5c after fees. Rare by
+            nature; every capture is arithmetic, not a forecast.
+          </EmptyNote>
+        ) : (
+          <div className="space-y-1 text-2xs">
+            <div className="flex flex-wrap gap-x-6 gap-y-1">
+              <span><span className="label">pairs</span> <Num>{data.arb.pairs}</Num></span>
+              <span><span className="label">locked net (at resolution)</span> <Num tone="pos">${data.arb.lockedNetUsd.toFixed(2)}</Num></span>
+              <span><span className="label">unwound (leg-2 miss)</span> <Num tone={data.arb.unwound ? "warn" : undefined}>{data.arb.unwound}</Num></span>
+            </div>
+            {data.arb.recent.map((p) => (
+              <div key={p.id} className="flex items-center gap-2 border-t border-line/60 pt-1">
+                <Badge variant={p.status === "filled" ? "pos" : "warn"}>{p.status}</Badge>
+                <span className="min-w-0 flex-1 truncate">{p.question}</span>
+                <Num>{p.pairs}×</Num>
+                <Num tone="pos">+${p.lockedNetUsd.toFixed(2)}</Num>
+                <span className="text-3xs text-ink-faint">{(p.netDiscount * 100).toFixed(1)}c/pair · {fmtAgo(p.ts)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
       <Panel title={`runtime errors (${data?.runtimeErrors.filter((e) => !e.resolved).length ?? 0} open)`}>
         {!data?.runtimeErrors.length ? (
           <EmptyNote>

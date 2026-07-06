@@ -62,10 +62,13 @@ const patchSchema = z
       minWalletSampleSize: z.number().min(5).max(500),
       minWalletForwardSamples: z.number().min(3).max(200),
       testOrderUsd: z.number().min(1).max(25),
+      arbEnabled: z.boolean(),
     }),
     autopilot: z.object({
       mode: z.enum(["off", "observe", "paper", "live"]),
       enabledStrategies: z.array(z.string()).max(20),
+      entryStyle: z.enum(["maker", "taker"]),
+      makerRestMin: z.number().min(1).max(120),
       minScore: z.number().min(0).max(100),
       perTradeUsd: z.number().min(1).max(100_000),
       maxOpenPositions: z.number().min(1).max(100),

@@ -16,6 +16,7 @@ import { getLastRuns, listIdeas } from "@/server/alpha/repo";
 import { walletIntelInfo } from "@/server/alpha/walletRadar";
 import { getAttention } from "@/server/alpha/attention";
 import { allOutcomes } from "@/server/alpha/outcomes";
+import { listArbPairs } from "@/server/alpha/arbExecutor";
 import { confluenceMatrix, driftByPriceProfile } from "@/lib/alpha/evidenceLab";
 import { strategyHitRates } from "@/lib/alpha/hitRate";
 import { listErrors } from "@/server/errorLog";
@@ -43,6 +44,15 @@ export async function GET() {
   // numbers the autopilot hit-rate governor gates on
   const hitRates = strategyHitRates(outcomes);
   const runtimeErrors = (await listErrors()).slice(0, 30);
+  // complement-arb ledger: discounts locked at entry (arithmetic, not P&L
+  // forecasts) — reported with pair counts and unwind honesty
+  const arbPairs = await listArbPairs();
+  const arb = {
+    pairs: arbPairs.length,
+    unwound: arbPairs.filter((p) => p.status === "unwound").length,
+    lockedNetUsd: Number(arbPairs.reduce((a, p) => a + p.lockedNetUsd, 0).toFixed(2)),
+    recent: arbPairs.slice(-5).reverse(),
+  };
   // realized paper PnL per strategy — AUTOPILOT-MANAGED trades only (the
   // bandit learns from realized exits); manual/mimic fills are not attributed
   const paperPnl = Object.fromEntries(
@@ -63,6 +73,7 @@ export async function GET() {
     driftProfile,
     hitRates,
     runtimeErrors,
+    arb,
     researchAgentPrompt: RESEARCH_AGENT_PROMPT,
   });
 }
