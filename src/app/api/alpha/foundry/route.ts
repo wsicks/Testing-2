@@ -19,6 +19,8 @@ import { allOutcomes } from "@/server/alpha/outcomes";
 import { listArbPairs } from "@/server/alpha/arbExecutor";
 import { categoryHalfLives, confluenceMatrix, driftByPriceProfile } from "@/lib/alpha/evidenceLab";
 import { strategyHitRates } from "@/lib/alpha/hitRate";
+import { privateEdgeProfiles } from "@/lib/alpha/privateEdge";
+import { strategyTournament } from "@/lib/engine/autopilot/tournament";
 import { listErrors } from "@/server/errorLog";
 import { getStore } from "@/server/store";
 import type { BanditState } from "@/lib/engine/autopilot/bandit";
@@ -43,6 +45,8 @@ export async function GET() {
   // measured per-strategy win rates (1h horizon) + Wilson floors — the same
   // numbers the autopilot hit-rate governor gates on
   const hitRates = strategyHitRates(outcomes);
+  const privateEdges = privateEdgeProfiles(outcomes);
+  const tournament = strategyTournament(hitRates, privateEdges);
   const halfLives = categoryHalfLives(outcomes);
   const runtimeErrors = (await listErrors()).slice(0, 30);
   // complement-arb ledger: discounts locked at entry (arithmetic, not P&L
@@ -73,6 +77,8 @@ export async function GET() {
     confluence,
     driftProfile,
     hitRates,
+    privateEdges,
+    tournament,
     halfLives,
     runtimeErrors,
     arb,

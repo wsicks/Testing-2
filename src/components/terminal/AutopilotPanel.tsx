@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import {
   useArmAutopilot,
   useAutopilot,
+  useAutopilotReplay,
   useDisarmAutopilot,
   usePatchSettings,
   useSettings,
@@ -43,6 +44,7 @@ function Chip({ label, value, tone }: { label: string; value: React.ReactNode; t
 
 export function AutopilotPanel({ full = false }: { full?: boolean }) {
   const { data: status, isLoading } = useAutopilot();
+  const { data: replay } = useAutopilotReplay(full);
   const { data: settingsData } = useSettings();
   const patch = usePatchSettings();
   const arm = useArmAutopilot();
@@ -325,6 +327,58 @@ export function AutopilotPanel({ full = false }: { full?: boolean }) {
           </div>
         )}
       </Panel>
+
+      {full ? (
+        <Panel
+          title="autopilot replay lab"
+          right={<Badge variant="accent">counterfactual audit trail</Badge>}
+          className="xl:col-span-3"
+          bodyClassName="max-h-64 overflow-y-auto p-0"
+        >
+          {!replay?.frames.length ? (
+            <EmptyNote>no replay frames yet — decisions will appear after observe, paper or live ticks</EmptyNote>
+          ) : (
+            <ul>
+              {replay.frames.slice(0, 12).map((frame) => (
+                <li key={frame.id} className="border-b border-line/60 px-2 py-1 text-2xs">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="num text-ink-faint">{fmtAgo(frame.ts)}</span>
+                    <Badge
+                      variant={
+                        frame.decisionKind === "entry"
+                          ? "pos"
+                          : frame.decisionKind === "exit"
+                            ? "accent"
+                            : frame.decisionKind === "halt"
+                              ? "neg"
+                              : "default"
+                      }
+                    >
+                      {frame.decisionKind}
+                    </Badge>
+                    {frame.strategy ? <span className="font-semibold">{frame.strategy}</span> : null}
+                    {frame.signalScore !== undefined ? <span className="num">score {frame.signalScore}</span> : null}
+                    {frame.privateEdgeCents !== undefined ? (
+                      <Num tone={frame.privateEdgeCents}>edge {frame.privateEdgeCents.toFixed(2)}c</Num>
+                    ) : null}
+                    {frame.fillProbability !== undefined ? (
+                      <Num tone={frame.fillProbability - 0.25}>fill {(frame.fillProbability * 100).toFixed(0)}%</Num>
+                    ) : null}
+                  </div>
+                  <div className="mt-0.5 text-3xs text-ink-soft">{frame.reason}</div>
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {frame.gates.map((gate) => (
+                      <Badge key={gate.name} variant={gate.passed ? "pos" : "neg"} title={gate.detail}>
+                        {gate.name}
+                      </Badge>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      ) : null}
 
       {/* decision tape */}
       <Panel

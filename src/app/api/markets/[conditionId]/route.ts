@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { gradeMarket } from "@/lib/engine/risk/grade";
+import { buildMarketIntelligence } from "@/lib/engine/marketIntelligence";
 import type { HistoryInterval } from "@/lib/polymarket/clob";
 import {
   getBook,
@@ -7,6 +8,7 @@ import {
   getMarketByCondition,
   getTrades,
 } from "@/server/marketData";
+import { peekBookSnapshot } from "@/server/hotpath/bookMemory";
 import { getStore } from "@/server/store";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +42,14 @@ export async function GET(
   ]);
 
   const grade = gradeMarket(market, settings.maxSpread);
+  const intelligence = buildMarketIntelligence({
+    market,
+    book: yesBook,
+    previousBook: market.yesTokenId ? peekBookSnapshot(market.yesTokenId) : undefined,
+    trades,
+    settings,
+    now: Date.now(),
+  });
 
   return NextResponse.json({
     market: { ...market, riskGrade: grade.grade, tradability: grade.tradability, gradeFactors: grade.factors },
@@ -48,6 +58,7 @@ export async function GET(
     history,
     trades,
     signals,
+    intelligence,
     polymarketUrl: market.eventSlug
       ? `https://polymarket.com/event/${market.eventSlug}`
       : market.slug

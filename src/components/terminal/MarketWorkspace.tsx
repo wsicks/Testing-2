@@ -54,6 +54,7 @@ export function MarketWorkspace({
   const yesBook = liveBook ?? data?.yesBook;
   const micro =
     yesBook && !isAsset ? computeMicroMetrics(yesBook, data?.trades ?? []) : null;
+  const mri = data?.intelligence;
 
   // crypto-linked event market → Coinbase spot overlay + threshold line
   const threshold = useMemo(
@@ -271,6 +272,65 @@ export function MarketWorkspace({
                     </div>
                   </div>
                 </>
+              ) : null}
+              {mri ? (
+                <div className="col-span-2 border border-line bg-paper px-1.5 py-1">
+                  <div className="mb-0.5 flex items-center justify-between gap-2">
+                    <span className="label">market mri</span>
+                    <Badge
+                      variant={
+                        mri.executionQuality.buyYes.fillProbability >= 0.5
+                          ? "pos"
+                          : mri.executionQuality.buyYes.fillProbability >= 0.25
+                            ? "warn"
+                            : "neg"
+                      }
+                    >
+                      fill {(mri.executionQuality.buyYes.fillProbability * 100).toFixed(0)}%
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-3xs">
+                    <span>
+                      <span className="label">wait</span>{" "}
+                      <Num>{Math.round(mri.executionQuality.buyYes.expectedWaitMs / 1000)}s</Num>
+                    </span>
+                    <span>
+                      <span className="label">adverse</span>{" "}
+                      <Num tone={-mri.executionQuality.buyYes.adverseSelectionRisk}>
+                        {(mri.executionQuality.buyYes.adverseSelectionRisk * 100).toFixed(0)}%
+                      </Num>
+                    </span>
+                    <span>
+                      <span className="label">stability</span>{" "}
+                      <Num tone={mri.reactor.quoteStability - 0.5}>
+                        {(mri.reactor.quoteStability * 100).toFixed(0)}%
+                      </Num>
+                    </span>
+                    <span>
+                      <span className="label">spoof risk</span>{" "}
+                      <Num tone={-mri.reactor.spoofRisk}>
+                        {(mri.reactor.spoofRisk * 100).toFixed(0)}%
+                      </Num>
+                    </span>
+                    <span>
+                      <span className="label">pressure</span>{" "}
+                      <Num tone={mri.reactor.bookPressure}>
+                        {(mri.reactor.bookPressure * 100).toFixed(0)}%
+                      </Num>
+                    </span>
+                    <span>
+                      <span className="label">vanished</span>{" "}
+                      <Num tone={-mri.reactor.unexplainedVanishUsd}>
+                        {fmtUsd(mri.reactor.unexplainedVanishUsd, 0)}
+                      </Num>
+                    </span>
+                  </div>
+                  {mri.executionQuality.buyYes.reasons.length ? (
+                    <div className="mt-0.5 truncate text-3xs text-ink-faint">
+                      {mri.executionQuality.buyYes.reasons.join(" · ")}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </Panel>

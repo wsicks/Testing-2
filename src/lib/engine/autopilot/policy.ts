@@ -22,6 +22,7 @@ import { shrunkKelly } from "../risk/kelly";
 import { genId } from "@/lib/utils";
 import type { StrategyHitRate } from "@/lib/alpha/hitRate";
 import { privateEdgeVerdict, type PrivateEdgeProfile } from "@/lib/alpha/privateEdge";
+import type { SignalExecutionQuality } from "@/lib/engine/marketIntelligence";
 
 // ── Hit-rate governor ────────────────────────────────────────────────────────
 // Entries are only taken from strategies whose MEASURED 1h hit rate holds up.
@@ -97,6 +98,35 @@ function skip(reason: string, sig?: SignalResult): AutopilotDecision {
     conditionId: sig?.conditionId,
     marketQuestion: sig?.marketQuestion,
     reason,
+  };
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function executionQuality(sig: SignalResult): SignalExecutionQuality | undefined {
+  const q = sig.meta?.executionQuality;
+  if (!q || typeof q !== "object") return undefined;
+  const x = q as Partial<SignalExecutionQuality>;
+  if (
+    typeof x.fillProbability !== "number" ||
+    typeof x.adverseSelectionRisk !== "number" ||
+    typeof x.quoteStability !== "number" ||
+    typeof x.spoofRisk !== "number" ||
+    typeof x.bookPressure !== "number" ||
+    typeof x.expectedWaitMs !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    fillProbability: x.fillProbability,
+    expectedWaitMs: x.expectedWaitMs,
+    adverseSelectionRisk: x.adverseSelectionRisk,
+    quoteStability: x.quoteStability,
+    spoofRisk: x.spoofRisk,
+    bookPressure: x.bookPressure,
+    reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string") : [],
   };
 }
 
@@ -215,6 +245,28 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       continue;
     }
 
+    const exec = executionQuality(sig);
+    if (config.entryStyle === "maker" && exec) {
+      if (exec.fillProbability < 0.18) {
+        skips.push(
+          skip(
+            `execution gate: maker fill probability ${(exec.fillProbability * 100).toFixed(0)}% is too low before the edge decays`,
+            sig,
+          ),
+        );
+        continue;
+      }
+      if (exec.adverseSelectionRisk > 0.78) {
+        skips.push(
+          skip(
+            `execution gate: adverse-selection risk ${(exec.adverseSelectionRisk * 100).toFixed(0)}% is too high (${exec.reasons.join(", ") || "book pressure"})`,
+            sig,
+          ),
+        );
+        continue;
+      }
+    }
+
     // side & price: buy the signaled outcome token. Maker style posts
     // INSIDE the spread (captures ~half of it); taker crosses to the ask.
     const buyYes = sig.direction === "BUY_YES";
@@ -262,6 +314,10 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       config.perTradeUsd,
       Math.max(Math.min(5, config.perTradeUsd), notional * privateEdge.sizeMultiplier),
     );
+    const executionSizeMultiplier = exec
+      ? clamp(0.35 + exec.fillProbability * (1 - exec.adverseSelectionRisk * 0.5), 0.2, 1)
+      : 1;
+    notional = Math.max(Math.min(5, config.perTradeUsd), notional * executionSizeMultiplier);
     if (session.notionalUsd + notional > config.maxSessionNotionalUsd) {
       skips.push(skip(`session notional budget exhausted ($${session.notionalUsd.toFixed(0)}/$${config.maxSessionNotionalUsd})`, sig));
       continue;
@@ -274,10 +330,20 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
     // anything with a demonstrated win rate above ~50%
     const provenBoost =
       hr && hr.n >= GOVERNOR_MIN_SAMPLES ? 0.5 + hr.wilsonLo : 0.75;
+    const executionRankMultiplier = exec
+      ? clamp(
+          0.55 +
+            exec.fillProbability -
+            exec.adverseSelectionRisk * 0.35 +
+            Math.max(0, exec.bookPressure) * 0.15,
+          0.2,
+          1.35,
+        )
+      : 1;
     candidates.push({
       strategy: sig.strategy,
       signal: sig,
-      rank: sampled * (sig.score / 100) * provenBoost * privateEdge.rankMultiplier,
+      rank: sampled * (sig.score / 100) * provenBoost * privateEdge.rankMultiplier * executionRankMultiplier,
       proposal: {
         conditionId: sig.conditionId,
         tokenId,

@@ -15,6 +15,7 @@ import type {
 import { clamp } from "@/lib/format";
 import { cappedKelly, kellyFraction } from "./kelly";
 import { resolutionClarity } from "../signals/closingSoon";
+import { estimateLimitFillProbability } from "../execution/fillProbability";
 
 function rc(
   name: string,
@@ -40,17 +41,7 @@ export function estimateFillProbability(
   proposal: TradeProposal,
   book: OrderBookData | undefined,
 ): number {
-  if (!book?.bestAsk || !book?.bestBid) return 0.5;
-  if (proposal.side === "BUY") {
-    if (proposal.orderType === "market" || proposal.price >= book.bestAsk) return 0.95;
-    const dist = book.bestAsk - proposal.price;
-    const spread = Math.max(0.001, book.spread ?? 0.01);
-    return clamp(0.85 - (dist / spread) * 0.35, 0.05, 0.9);
-  }
-  if (proposal.orderType === "market" || proposal.price <= book.bestBid) return 0.95;
-  const dist = proposal.price - book.bestBid;
-  const spread = Math.max(0.001, book.spread ?? 0.01);
-  return clamp(0.85 - (dist / spread) * 0.35, 0.05, 0.9);
+  return estimateLimitFillProbability({ proposal, book }).probability;
 }
 
 /** slippage (price units) from walking the book for `size` shares */

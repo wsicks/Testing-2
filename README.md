@@ -122,6 +122,14 @@ rank/size multipliers. The autopilot uses those profiles to skip stale signals,
 block entries that no longer clear current friction, penalize fragile execution
 and re-rank/calibrate candidates without bypassing the independent risk engine.
 
+**Market MRI and replay lab.** Selected markets now expose a compact execution
+diagnostic layer: order-book reactor stability, unexplained vanished depth,
+spoof-risk, book pressure, maker fill probability, expected wait and
+adverse-selection risk. Scanner-created signals carry that execution snapshot
+into autopilot policy, and the full autopilot page includes a replay lab that
+reconstructs recent decisions into signal, market, private-edge and execution
+gates.
+
 **Live arming ritual.** Setting mode to `live` does not trade. The user must
 additionally type `ARM LIVE AUTOPILOT` with a TTL (5min–8h). While armed, the
 engine may submit live limit orders inside the envelope without per-order
@@ -425,7 +433,7 @@ registry rebuilds, and a simulated 1,000-updates/second ingest — all asserted
 ## Testing
 
 ```bash
-npm test                # 270 tests: unit (signals, risk, kelly, paper engine,
+npm test                # 278 tests: unit (signals, risk, kelly, paper engine,
                         # monte carlo, backtester, walk-forward, kalman/regime,
                         # bandit/policy/exits, alpha scoring/prosecutor/mimic)
                         # + integration (API adapters, recorded fixtures)

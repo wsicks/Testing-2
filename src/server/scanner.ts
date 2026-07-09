@@ -9,6 +9,11 @@ import {
 } from "@/lib/constants";
 import { runAllStrategies } from "@/lib/engine/signals/registry";
 import { parseCryptoThreshold } from "@/lib/engine/crossvenue/threshold";
+import {
+  buildMarketIntelligence,
+  compactExecutionQuality,
+  executionQualityForDirection,
+} from "@/lib/engine/marketIntelligence";
 import type { OrderBookData, RecentTrade, SignalContext, SignalResult } from "@/lib/types";
 import { audit } from "./audit";
 import { autopilotTick } from "./autopilot";
@@ -193,7 +198,26 @@ export async function scanOnce(force = false): Promise<ScanSummary> {
           (strategyId, err) => logError(`strategy:${strategyId}`, err, m.conditionId),
         ),
       );
-      for (const sig of results) {
+      const intelligence = buildMarketIntelligence({
+        market: m,
+        book: books.get(m.conditionId),
+        previousBook: prevBooks.get(m.conditionId),
+        trades: tapes.get(m.conditionId),
+        settings,
+        now,
+      });
+      const enriched = results.map((sig) => {
+        const executionQuality = executionQualityForDirection(intelligence, sig.direction);
+        if (!executionQuality) return sig;
+        return {
+          ...sig,
+          meta: {
+            ...sig.meta,
+            executionQuality: compactExecutionQuality(executionQuality),
+          },
+        };
+      });
+      for (const sig of enriched) {
         if (seen.has(`${sig.strategy}:${sig.conditionId}`)) continue;
         seen.add(`${sig.strategy}:${sig.conditionId}`);
         created.push(sig);

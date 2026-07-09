@@ -1,6 +1,7 @@
 import type { AppSettings, NormalizedMarket, SignalResult } from "@/lib/types";
 import { wilsonLower } from "./hitRate";
 import type { AlphaOutcome, DecayBucketKey } from "./types";
+import { conformalInterval } from "@/lib/engine/risk/conformal";
 
 const DEFAULT_SPREAD = 0.02;
 const ARCHIVE_SLIPPAGE_EST = 0.005;
@@ -36,6 +37,9 @@ export interface PrivateEdgeProfile {
   posteriorNetWinProb: number;
   avgDrift1h: number;
   avgNetDrift1h: number;
+  conformalNetEdgeLo: number;
+  conformalNetEdgeHi: number;
+  conformalConfidence: number;
   avgSpread: number;
   avgFriction: number;
   tradableShare: number;
@@ -142,6 +146,7 @@ function edgeNotes(profile: Omit<PrivateEdgeProfile, "notes">): string[] {
   const notes: string[] = [];
   if (!profile.sampleReady) notes.push("low_sample_shadow_only");
   if (profile.avgNetDrift1h > 0) notes.push("positive_net_drift");
+  if (profile.conformalNetEdgeLo > 0) notes.push("conformal_edge_confirmed");
   if (profile.posteriorNetWinProb >= 0.55) notes.push("posterior_net_hit_positive");
   if (profile.halfLifeMs <= 30 * 60_000) notes.push("fast_decay");
   if (profile.executionPenalty >= 0.35) notes.push("fragile_execution");
@@ -169,7 +174,8 @@ export function privateEdgeProfiles(outcomes: AlphaOutcome[]): PrivateEdgeProfil
       const wins = captured1h.filter(({ drift }) => drift > 0).length;
       const netWins = captured1h.filter(({ row, drift }) => drift > archiveFriction(row)).length;
       const driftSum = captured1h.reduce((sum, { drift }) => sum + drift, 0);
-      const netDriftSum = captured1h.reduce((sum, { row, drift }) => sum + drift - archiveFriction(row), 0);
+      const netDrifts = captured1h.map(({ row, drift }) => drift - archiveFriction(row));
+      const netDriftSum = netDrifts.reduce((sum, drift) => sum + drift, 0);
       const frictionSamples = captured1h.map(({ row }) => archiveFriction(row));
       const spreadSamples = rows
         .map((row) => row.spreadAtSignal)
@@ -191,12 +197,13 @@ export function privateEdgeProfiles(outcomes: AlphaOutcome[]): PrivateEdgeProfil
       const posteriorNetWinProb = n ? (netWins + 2) / (n + 4) : 0.5;
       const avgDrift1h = n ? driftSum / n : 0;
       const avgNetDrift1h = n ? netDriftSum / n : 0;
+      const conformal = conformalInterval(netDrifts, avgNetDrift1h, 0.1);
       const halfLifeMs = estimateHalfLifeMs(b5m.avgDrift, avgDrift1h);
       const staleAfterMs = clamp(halfLifeMs * 1.5, FIVE_MIN_MS, TWO_HOURS_MS);
       const sampleConfidence = sampleReady ? 0.25 + 0.75 * Math.sqrt(clamp(n / 60, 0, 1)) : (n / PRIVATE_EDGE_MIN_SAMPLES) * 0.25;
       const confidence = clamp(sampleConfidence * (0.65 + 0.35 * tradableShare) * (1 - executionPenalty * 0.35), 0, 1);
       const wilsonNetLo = wilsonLower(netWins, n);
-      const driftScore = clamp(avgNetDrift1h / 0.03, -1, 1);
+      const driftScore = clamp(((avgNetDrift1h + Math.min(0, conformal.lower)) / 2) / 0.03, -1, 1);
       const posteriorScore = clamp((posteriorNetWinProb - 0.5) * 2, -1, 1);
       const combinedScore = clamp(0.65 * posteriorScore + 0.35 * driftScore - executionPenalty, -1, 1);
       const quality = clamp(0.5 + combinedScore / 2, 0, 1);
@@ -218,6 +225,9 @@ export function privateEdgeProfiles(outcomes: AlphaOutcome[]): PrivateEdgeProfil
         posteriorNetWinProb: round(posteriorNetWinProb),
         avgDrift1h: round(avgDrift1h),
         avgNetDrift1h: round(avgNetDrift1h),
+        conformalNetEdgeLo: conformal.lower,
+        conformalNetEdgeHi: conformal.upper,
+        conformalConfidence: conformal.confidence,
         avgSpread: round(avgSpread),
         avgFriction: round(avgFriction),
         tradableShare: round(tradableShare),

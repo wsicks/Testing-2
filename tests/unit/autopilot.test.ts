@@ -250,6 +250,32 @@ describe("entry policy", () => {
     expect(candidates).toHaveLength(0);
     expect(skips.some((s) => s.reason.includes("private edge net economics"))).toBe(true);
   });
+
+  it("blocks maker entries when execution intelligence says the fill will not arrive in time", () => {
+    const { candidates, skips } = decideEntries(
+      policyInput({
+        signals: [
+          makeSignal({
+            meta: {
+              modelWinProb: 0.7,
+              executionQuality: {
+                fillProbability: 0.1,
+                expectedWaitMs: 900_000,
+                adverseSelectionRisk: 0.2,
+                quoteStability: 0.8,
+                spoofRisk: 0.1,
+                bookPressure: 0.1,
+                reasons: ["low_fill_probability"],
+              },
+            },
+          }),
+        ],
+      }),
+    );
+
+    expect(candidates).toHaveLength(0);
+    expect(skips.some((s) => s.reason.includes("execution gate"))).toBe(true);
+  });
 });
 
 describe("exit manager", () => {

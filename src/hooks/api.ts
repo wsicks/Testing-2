@@ -95,6 +95,7 @@ export interface MarketDetail {
   history: PricePoint[];
   trades: RecentTrade[];
   signals: SignalResult[];
+  intelligence?: import("@/lib/engine/marketIntelligence").MarketIntelligence;
   polymarketUrl?: string;
   watchlisted: boolean;
 }
@@ -362,6 +363,15 @@ export function useAutopilot() {
   });
 }
 
+export function useAutopilotReplay(enabled = true) {
+  return useQuery<{ frames: import("@/lib/engine/autopilot/replay").AutopilotReplayFrame[] }>({
+    queryKey: ["autopilot", "replay"],
+    queryFn: () => json("/api/autopilot/replay"),
+    enabled,
+    refetchInterval: 15_000,
+  });
+}
+
 export function useArmAutopilot() {
   const qc = useQueryClient();
   return useMutation({
@@ -518,6 +528,8 @@ export interface FoundryResponse {
   confluence: import("@/lib/alpha/evidenceLab").ConfluenceResult;
   driftProfile: import("@/lib/alpha/evidenceLab").DriftProfile;
   hitRates: import("@/lib/alpha/hitRate").StrategyHitRate[];
+  privateEdges: import("@/lib/alpha/privateEdge").PrivateEdgeProfile[];
+  tournament: import("@/lib/engine/autopilot/tournament").StrategyTournamentEntry[];
   halfLives: import("@/lib/alpha/evidenceLab").CategoryHalfLife[];
   runtimeErrors: import("@/server/errorLog").ErrorLogEntry[];
   arb: {

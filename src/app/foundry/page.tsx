@@ -361,6 +361,61 @@ export default function FoundryPage() {
         </div>
       </Panel>
 
+      <Panel title="strategy tournament — promotion ladder">
+        {!data?.tournament.length ? (
+          <EmptyNote>no strategy tournament yet — waiting for measured outcomes</EmptyNote>
+        ) : (
+          <table className="w-full text-2xs">
+            <thead>
+              <tr className="border-b border-line-strong text-left">
+                {["strategy", "tier", "score", "samples", "net hit", "private edge", "fill quality", "why"].map((h) => (
+                  <th key={h} className="cell label">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.tournament.map((t) => (
+                <tr key={t.strategy} className="border-b border-line/60">
+                  <td className="cell font-semibold">{t.strategy}</td>
+                  <td className="cell">
+                    <Badge
+                      variant={
+                        t.tier === "promote"
+                          ? "pos"
+                          : t.tier === "shadow"
+                            ? "accent"
+                            : t.tier === "retire"
+                              ? "neg"
+                              : "warn"
+                      }
+                    >
+                      {t.tier}
+                    </Badge>
+                  </td>
+                  <td className="cell"><Num tone={t.score - 50}>{t.score}</Num></td>
+                  <td className="cell"><Num>{t.evidence.samples}</Num></td>
+                  <td className="cell"><Num tone={t.evidence.netHitRate - 0.5}>{(t.evidence.netHitRate * 100).toFixed(0)}%</Num></td>
+                  <td className="cell">
+                    {t.evidence.privateEdgeCents !== undefined ? (
+                      <Num tone={t.evidence.privateEdgeCents}>{t.evidence.privateEdgeCents.toFixed(2)}c</Num>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </td>
+                  <td className="cell"><Num tone={(t.evidence.fillQuality ?? 0.5) - 0.5}>{((t.evidence.fillQuality ?? 0) * 100).toFixed(0)}%</Num></td>
+                  <td className="cell text-3xs text-ink-faint">{t.reasons.join(" · ") || "measuring"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="pt-0.5 text-3xs text-ink-faint">
+          The tournament blends sample count, Wilson floor, net hit rate,
+          private edge after friction and execution quality. It is a promotion
+          queue, not a profit claim.
+        </p>
+      </Panel>
+
       <Panel title="measured win rates — what the governor gates on">
         {!data?.hitRates.length ? (
           <EmptyNote>

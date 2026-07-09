@@ -34,3 +34,8 @@ export function swapBookSnapshot(tokenId: string, book: OrderBookData): OrderBoo
   s.byToken.set(tokenId, book);
   return prev;
 }
+
+/** inspect the remembered snapshot without advancing the diff baseline */
+export function peekBookSnapshot(tokenId: string): OrderBookData | undefined {
+  return state().byToken.get(tokenId);
+}

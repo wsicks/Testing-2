@@ -34,10 +34,12 @@ import {
   type BanditState,
 } from "@/lib/engine/autopilot/bandit";
 import { decideEntries } from "@/lib/engine/autopilot/policy";
+import { buildReplayFrame, type AutopilotReplayFrame } from "@/lib/engine/autopilot/replay";
 import { evaluateExit } from "@/lib/engine/autopilot/exits";
 import { classifyRegime, type Regime } from "@/lib/engine/micro/regime";
 import { strategyHitRates } from "@/lib/alpha/hitRate";
 import { privateEdgeProfiles } from "@/lib/alpha/privateEdge";
+import type { SignalExecutionQuality } from "@/lib/engine/marketIntelligence";
 import { allOutcomes } from "./alpha/outcomes";
 import { listFeatures } from "./alpha/repo";
 import { audit } from "./audit";
@@ -439,6 +441,58 @@ export async function getAutopilotStatus(): Promise<AutopilotStatus> {
 }
 
 // ── the tick ─────────────────────────────────────────────────────────────────
+
+function replayExecution(sig: SignalResult | undefined): SignalExecutionQuality | undefined {
+  const q = sig?.meta?.executionQuality;
+  if (!q || typeof q !== "object") return undefined;
+  const x = q as Partial<SignalExecutionQuality>;
+  if (
+    typeof x.fillProbability !== "number" ||
+    typeof x.expectedWaitMs !== "number" ||
+    typeof x.adverseSelectionRisk !== "number" ||
+    typeof x.quoteStability !== "number" ||
+    typeof x.spoofRisk !== "number" ||
+    typeof x.bookPressure !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    fillProbability: x.fillProbability,
+    expectedWaitMs: x.expectedWaitMs,
+    adverseSelectionRisk: x.adverseSelectionRisk,
+    quoteStability: x.quoteStability,
+    spoofRisk: x.spoofRisk,
+    bookPressure: x.bookPressure,
+    reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string") : [],
+  };
+}
+
+export async function getAutopilotReplay(): Promise<{ frames: AutopilotReplayFrame[] }> {
+  await loadPersisted();
+  const s = state();
+  const store = await getStore();
+  const [{ markets }, signals, outcomes] = await Promise.all([
+    getMarkets(),
+    store.listSignals({ limit: 500 }),
+    allOutcomes(),
+  ]);
+  const marketByCondition = new Map(markets.map((m) => [m.conditionId, m]));
+  const edgeByStrategy = new Map(privateEdgeProfiles(outcomes).map((p) => [p.strategy, p]));
+  const signalByKey = new Map(
+    signals.map((sig) => [`${sig.strategy}:${sig.conditionId ?? ""}`, sig]),
+  );
+  const frames = s.decisions.slice(0, 80).map((decision) => {
+    const signal = signalByKey.get(`${decision.strategy ?? ""}:${decision.conditionId ?? ""}`);
+    return buildReplayFrame({
+      decision,
+      signal,
+      market: decision.conditionId ? marketByCondition.get(decision.conditionId) : undefined,
+      privateEdge: decision.strategy ? edgeByStrategy.get(decision.strategy) : undefined,
+      execution: replayExecution(signal),
+    });
+  });
+  return { frames };
+}
 
 export async function autopilotTick(): Promise<{ ran: boolean; entries: number; exits: number }> {
   await loadPersisted();
