@@ -21,6 +21,7 @@ import { regimeAllows, type Regime } from "../micro/regime";
 import { shrunkKelly } from "../risk/kelly";
 import { genId } from "@/lib/utils";
 import type { StrategyHitRate } from "@/lib/alpha/hitRate";
+import { privateEdgeVerdict, type PrivateEdgeProfile } from "@/lib/alpha/privateEdge";
 
 // ── Hit-rate governor ────────────────────────────────────────────────────────
 // Entries are only taken from strategies whose MEASURED 1h hit rate holds up.
@@ -52,6 +53,8 @@ export interface PolicyInput {
   session: { trades: number; notionalUsd: number; tradesLastHour: number };
   /** measured per-strategy hit rates from the outcome archive */
   hitRates?: Map<string, StrategyHitRate>;
+  /** private per-strategy edge profiles from the local outcome archive */
+  privateEdge?: Map<string, PrivateEdgeProfile>;
   /**
    * strategies whose latest walk-forward backtest measured NEGATIVE net
    * expectancy with zero positive folds — blocked from entries until a
@@ -177,6 +180,11 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       continue;
     }
 
+    const modelWinProb =
+      typeof sig.meta?.modelWinProb === "number"
+        ? (sig.meta.modelWinProb as number)
+        : undefined;
+
     // per-market NET economics: a strategy with measured evidence must
     // clear THIS market's friction, not just be non-terrible on average —
     // +0.8c of measured drift entered on a 3c-spread book is a losing trade
@@ -191,6 +199,19 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
           sig,
         ),
       );
+      continue;
+    }
+
+    const privateEdge = privateEdgeVerdict({
+      profile: input.privateEdge?.get(sig.strategy),
+      signal: sig,
+      market,
+      settings: input.settings,
+      now,
+      modelWinProbability: modelWinProb,
+    });
+    if (!privateEdge.allow) {
+      skips.push(skip(privateEdge.reason ?? "private edge gate blocked entry", sig));
       continue;
     }
 
@@ -220,18 +241,15 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       continue;
     }
 
-    const modelWinProb =
-      typeof sig.meta?.modelWinProb === "number"
-        ? (sig.meta.modelWinProb as number)
-        : undefined;
+    const sizingWinProb = privateEdge.adjustedWinProbability ?? modelWinProb;
 
     // sizing: uncertainty-shrunk Kelly when the strategy provides a model
     // probability, else the flat per-trade budget; always capped by config
     const arm = sampledByStrategy.get(sig.strategy);
     let notional = config.perTradeUsd;
-    if (modelWinProb !== undefined) {
+    if (sizingWinProb !== undefined) {
       const frac = shrunkKelly(
-        modelWinProb,
+        sizingWinProb,
         price,
         { wins: arm?.wins ?? 0, losses: arm?.losses ?? 0 },
         input.settings.kellyCap,
@@ -240,6 +258,10 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
       const kellyUsd = frac * Math.max(1, input.portfolio.totalValue);
       notional = Math.min(config.perTradeUsd, Math.max(5, kellyUsd));
     }
+    notional = Math.min(
+      config.perTradeUsd,
+      Math.max(Math.min(5, config.perTradeUsd), notional * privateEdge.sizeMultiplier),
+    );
     if (session.notionalUsd + notional > config.maxSessionNotionalUsd) {
       skips.push(skip(`session notional budget exhausted ($${session.notionalUsd.toFixed(0)}/$${config.maxSessionNotionalUsd})`, sig));
       continue;
@@ -255,7 +277,7 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
     candidates.push({
       strategy: sig.strategy,
       signal: sig,
-      rank: sampled * (sig.score / 100) * provenBoost,
+      rank: sampled * (sig.score / 100) * provenBoost * privateEdge.rankMultiplier,
       proposal: {
         conditionId: sig.conditionId,
         tokenId,
@@ -266,7 +288,7 @@ export function decideEntries(input: PolicyInput): PolicyOutput {
         orderType: "limit",
         price: Number(price.toFixed(3)),
         size,
-        winProbability: modelWinProb,
+        winProbability: sizingWinProb,
         signalScore: sig.score,
         signalId: sig.id,
       },

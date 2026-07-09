@@ -8,8 +8,10 @@ import {
 import { decideEntries, type PolicyInput } from "@/lib/engine/autopilot/policy";
 import { evaluateExit } from "@/lib/engine/autopilot/exits";
 import { shrunkKelly } from "@/lib/engine/risk/kelly";
+import { privateEdgeProfiles } from "@/lib/alpha/privateEdge";
 import { mulberry32 } from "@/lib/rng";
 import { DEFAULT_AUTOPILOT } from "@/lib/constants";
+import type { AlphaOutcome } from "@/lib/alpha/types";
 import type { ManagedPosition, SignalResult } from "@/lib/types";
 import { makeMarket, makePortfolio, makeSettings } from "../helpers";
 
@@ -50,6 +52,31 @@ function policyInput(overrides: Partial<PolicyInput> = {}): PolicyInput {
     now,
     ...overrides,
   };
+}
+
+function outcome(overrides: Partial<AlphaOutcome> = {}): AlphaOutcome {
+  return {
+    id: `out-${Math.random()}`,
+    featureId: "dislocation",
+    signalId: "sig1",
+    conditionId: "0xcond1",
+    direction: "BUY_YES",
+    entryMid: 0.55,
+    spreadAtSignal: 0.01,
+    bookAgeMsAtSignal: 5_000,
+    tradable: true,
+    wasProposed: true,
+    createdAt: now,
+    buckets: {
+      b5m: { drift: 0.03, at: now + 5 * 60_000 },
+      b1h: { drift: 0.04, at: now + 60 * 60_000 },
+    },
+    ...overrides,
+  };
+}
+
+function privateEdge(rows: AlphaOutcome[]): PolicyInput["privateEdge"] {
+  return new Map(privateEdgeProfiles(rows).map((profile) => [profile.strategy, profile]));
 }
 
 describe("thompson bandit", () => {
@@ -177,6 +204,51 @@ describe("entry policy", () => {
     expect(candidates).toHaveLength(1);
     // implied NO book: bid 1-0.56=0.44, ask 1-0.54=0.46 → posts at 0.45
     expect(candidates[0].proposal.price).toBeCloseTo(0.45, 3);
+  });
+  it("blocks stale entries when local evidence says the strategy decays quickly", () => {
+    const rows = Array.from({ length: 24 }, () =>
+      outcome({ buckets: { b5m: { drift: 0.04 }, b1h: { drift: 0.004 } } }),
+    );
+    const { candidates, skips } = decideEntries(
+      policyInput({
+        privateEdge: privateEdge(rows),
+        signals: [
+          makeSignal({
+            createdAt: now - 45 * 60_000,
+            expiresAt: now + 60_000,
+          }),
+        ],
+      }),
+    );
+
+    expect(candidates).toHaveLength(0);
+    expect(skips.some((s) => s.reason.includes("private edge stale"))).toBe(true);
+  });
+
+  it("uses strong private evidence to re-rank and calibrate model probability", () => {
+    const rows = Array.from({ length: 60 }, () => outcome());
+    const base = decideEntries(policyInput());
+    const withPrivateEdge = decideEntries(policyInput({ privateEdge: privateEdge(rows) }));
+
+    expect(withPrivateEdge.candidates).toHaveLength(1);
+    expect(withPrivateEdge.candidates[0].rank).toBeGreaterThan(base.candidates[0].rank);
+    expect(withPrivateEdge.candidates[0].proposal.winProbability).toBeGreaterThan(0.62);
+  });
+
+  it("blocks entries whose measured private edge cannot clear current friction", () => {
+    const rows = Array.from({ length: 24 }, () =>
+      outcome({ buckets: { b5m: { drift: 0.025 }, b1h: { drift: 0.02 } } }),
+    );
+    const market = makeMarket({ spread: 0.08, bestBid: 0.51, bestAsk: 0.59 });
+    const { candidates, skips } = decideEntries(
+      policyInput({
+        markets: new Map([[market.conditionId, market]]),
+        privateEdge: privateEdge(rows),
+      }),
+    );
+
+    expect(candidates).toHaveLength(0);
+    expect(skips.some((s) => s.reason.includes("private edge net economics"))).toBe(true);
   });
 });
 

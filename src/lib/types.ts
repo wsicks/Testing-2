@@ -279,6 +279,22 @@ export type LiveIntentStatus =
   | "approval_required"
   | "confirmed";
 
+export type LiveOrderVenueStatus =
+  | "submitted"
+  | "open"
+  | "partially_filled"
+  | "filled"
+  | "canceled"
+  | "rejected"
+  | "expired";
+
+export interface LiveOrderSnapshot {
+  orderId?: string;
+  status: LiveOrderVenueStatus;
+  filledSize?: number;
+  error?: string;
+}
+
 export interface LiveOrderIntent {
   id: string;
   conditionId?: string;

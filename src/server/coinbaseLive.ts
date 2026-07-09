@@ -6,12 +6,18 @@
 // is never used as an automatic hedge unless the user explicitly enables
 // hedge automation (not implemented). Submission fails closed.
 
-import type { LiveOrderIntent } from "@/lib/types";
+import type { LiveOrderIntent, LiveOrderSnapshot } from "@/lib/types";
 
-export async function submitCoinbaseOrder(_intent: LiveOrderIntent): Promise<{ orderId: string }> {
+export async function submitCoinbaseOrder(_intent: LiveOrderIntent): Promise<LiveOrderSnapshot> {
   throw new Error(
     "Coinbase live trading is not configured. It requires scoped Advanced Trade API credentials (COINBASE_API_KEY_NAME / COINBASE_API_PRIVATE_KEY) and the per-venue live flag in Settings (see README — Venues). No order was sent.",
   );
+}
+
+export async function fetchCoinbaseOrderSnapshot(
+  _intent: LiveOrderIntent,
+): Promise<LiveOrderSnapshot> {
+  throw new Error("Coinbase live trading is not configured - no upstream order to reconcile.");
 }
 
 export async function cancelCoinbaseOrder(_orderId: string): Promise<void> {

@@ -115,6 +115,13 @@ Every tick (30s, alongside the scanner):
 Every decision — including every skip — is recorded with its reason in the
 decision tape, the live feed, and the audit log.
 
+**Private edge layer.** The local outcome archive builds per-strategy profiles
+from your own measured evidence: Bayesian net-hit probability, 1h net drift
+after friction, signal half-life, tradability share, stale-book share and
+rank/size multipliers. The autopilot uses those profiles to skip stale signals,
+block entries that no longer clear current friction, penalize fragile execution
+and re-rank/calibrate candidates without bypassing the independent risk engine.
+
 **Live arming ritual.** Setting mode to `live` does not trade. The user must
 additionally type `ARM LIVE AUTOPILOT` with a TTL (5min–8h). While armed, the
 engine may submit live limit orders inside the envelope without per-order
@@ -418,7 +425,7 @@ registry rebuilds, and a simulated 1,000-updates/second ingest — all asserted
 ## Testing
 
 ```bash
-npm test                # 207 tests: unit (signals, risk, kelly, paper engine,
+npm test                # 270 tests: unit (signals, risk, kelly, paper engine,
                         # monte carlo, backtester, walk-forward, kalman/regime,
                         # bandit/policy/exits, alpha scoring/prosecutor/mimic)
                         # + integration (API adapters, recorded fixtures)
@@ -432,6 +439,10 @@ npm run build           # production build
 Copy `.env.example` → `.env.local`. Everything is optional; see the file for
 full documentation of storage, Redis, endpoint overrides, read-only wallet
 analytics, and the live-trading gate.
+
+State-changing `/api/*` calls are guarded by same-origin checks. For
+non-browser automation against a deployed instance, set `POLYQUANT_MUTATION_TOKEN`
+and send it as `Authorization: Bearer ...` or `x-polyquant-mutation-token`.
 
 ## Compliance & safety notes
 

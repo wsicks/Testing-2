@@ -5,6 +5,7 @@
 import type {
   AppSettings,
   LiveOrderIntent,
+  LiveOrderSnapshot,
   OrderBookData,
   OrderSide,
   OrderType,
@@ -50,6 +51,38 @@ export interface PlaceOrderResult {
   order?: PaperOrder;
   assessment: RiskAssessment;
   rejected: boolean;
+}
+
+const LIVE_TERMINAL = new Set(["filled", "canceled", "rejected", "expired"]);
+
+function clampFilled(size: number, filledSize: number | undefined): number {
+  const filled = Number(filledSize ?? 0);
+  return Number.isFinite(filled) ? Math.min(size, Math.max(0, filled)) : 0;
+}
+
+function applyLiveSnapshot(
+  intent: LiveOrderIntent,
+  snapshot: LiveOrderSnapshot,
+): LiveOrderIntent {
+  let filledSize =
+    snapshot.status === "filled" && snapshot.filledSize === undefined
+      ? intent.size
+      : clampFilled(intent.size, snapshot.filledSize ?? intent.filledSize);
+  let status: LiveOrderIntent["status"] = snapshot.status;
+  if (filledSize >= intent.size) {
+    status = "filled";
+    filledSize = intent.size;
+  } else if (filledSize > 0 && !LIVE_TERMINAL.has(status)) {
+    status = "partially_filled";
+  }
+  return {
+    ...intent,
+    clobOrderId: snapshot.orderId ?? intent.clobOrderId,
+    filledSize,
+    status,
+    error: snapshot.error ?? intent.error,
+    updatedAt: Date.now(),
+  };
 }
 
 async function marketContext(body: PlaceOrderBody) {
@@ -582,17 +615,15 @@ export async function confirmLiveIntent(
   try {
     const venue = venueForToken(next.tokenId);
     const res = await submitByVenue(venue, next);
-    next = {
-      ...next,
-      status: "submitted",
-      clobOrderId: res.orderId,
-      updatedAt: Date.now(),
-    };
+    next = applyLiveSnapshot(next, res);
     await store.updateIntent(next);
-    await audit("execution", "live_order_submitted", `LIVE order submitted to CLOB: ${res.orderId}`, {
-      data: { intentId: id, clobOrderId: res.orderId },
+    await audit("execution", "live_order_submitted", `LIVE order accepted by venue: ${next.clobOrderId ?? "unknown"} (${next.status}, filled ${next.filledSize}/${next.size})`, {
+      data: { intentId: id, clobOrderId: next.clobOrderId, status: next.status, filledSize: next.filledSize },
       feedType: "order_submitted",
     });
+    if (next.clobOrderId && !LIVE_TERMINAL.has(next.status)) {
+      next = await reconcileLiveIntent(next.id);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown adapter error";
     next = { ...next, status: "rejected", error: message, updatedAt: Date.now() };
@@ -606,10 +637,58 @@ export async function confirmLiveIntent(
   return next;
 }
 
+export async function reconcileLiveIntent(id: string): Promise<LiveOrderIntent> {
+  const store = await getStore();
+  const intent = await store.getIntent(id);
+  if (!intent) throw new Error("Intent not found");
+  if (!intent.clobOrderId || LIVE_TERMINAL.has(intent.status)) return intent;
+
+  try {
+    const snapshot = await fetchByVenue(venueForToken(intent.tokenId), intent);
+    const next = applyLiveSnapshot(intent, snapshot);
+    await store.updateIntent(next);
+    if (
+      next.status !== intent.status ||
+      next.filledSize !== intent.filledSize ||
+      next.error !== intent.error
+    ) {
+      await audit(
+        "execution",
+        "live_order_reconciled",
+        `LIVE order ${id} reconciled: ${next.status}, filled ${next.filledSize}/${next.size}`,
+        {
+          data: {
+            intentId: id,
+            clobOrderId: next.clobOrderId,
+            status: next.status,
+            filledSize: next.filledSize,
+          },
+          feedType: next.status === "filled" ? "order_filled" : "order_submitted",
+        },
+      );
+    }
+    return next;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown reconciliation error";
+    const next = {
+      ...intent,
+      error: `live reconciliation failed: ${message}`,
+      updatedAt: Date.now(),
+    };
+    await store.updateIntent(next);
+    await audit("execution", "live_order_reconcile_failed", `LIVE order reconciliation failed: ${message}`, {
+      severity: "warn",
+      data: { intentId: id, clobOrderId: intent.clobOrderId },
+      feedType: "api_error",
+    });
+    return next;
+  }
+}
+
 async function submitByVenue(
   venue: VenueId,
   intent: LiveOrderIntent,
-): Promise<{ orderId: string }> {
+): Promise<LiveOrderSnapshot> {
   switch (venue) {
     case "polymarket": {
       const { submitLiveOrder } = await import("./liveAdapter");
@@ -625,6 +704,28 @@ async function submitByVenue(
     }
     default:
       throw new Error(`venue ${venue} cannot execute orders`);
+  }
+}
+
+async function fetchByVenue(
+  venue: VenueId,
+  intent: LiveOrderIntent,
+): Promise<LiveOrderSnapshot> {
+  switch (venue) {
+    case "polymarket": {
+      const { fetchLiveOrderSnapshot } = await import("./liveAdapter");
+      return fetchLiveOrderSnapshot(intent);
+    }
+    case "kalshi": {
+      const { fetchKalshiOrderSnapshot } = await import("./kalshiLive");
+      return fetchKalshiOrderSnapshot(intent);
+    }
+    case "coinbase": {
+      const { fetchCoinbaseOrderSnapshot } = await import("./coinbaseLive");
+      return fetchCoinbaseOrderSnapshot(intent);
+    }
+    default:
+      throw new Error(`venue ${venue} cannot reconcile orders`);
   }
 }
 

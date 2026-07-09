@@ -8,12 +8,18 @@
 // environment (KALSHI_DEMO_API_URL) uses separate credentials and is the
 // recommended first step.
 
-import type { LiveOrderIntent } from "@/lib/types";
+import type { LiveOrderIntent, LiveOrderSnapshot } from "@/lib/types";
 
-export async function submitKalshiOrder(_intent: LiveOrderIntent): Promise<{ orderId: string }> {
+export async function submitKalshiOrder(_intent: LiveOrderIntent): Promise<LiveOrderSnapshot> {
   throw new Error(
     "Kalshi live trading is not configured. It requires KALSHI_API_KEY_ID and a signing key, the per-venue live flag in Settings, and Kalshi terms/eligibility acknowledgment (see README — Venues). Start with the Kalshi demo environment. No order was sent.",
   );
+}
+
+export async function fetchKalshiOrderSnapshot(
+  _intent: LiveOrderIntent,
+): Promise<LiveOrderSnapshot> {
+  throw new Error("Kalshi live trading is not configured - no upstream order to reconcile.");
 }
 
 export async function cancelKalshiOrder(_orderId: string): Promise<void> {

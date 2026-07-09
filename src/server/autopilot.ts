@@ -37,6 +37,7 @@ import { decideEntries } from "@/lib/engine/autopilot/policy";
 import { evaluateExit } from "@/lib/engine/autopilot/exits";
 import { classifyRegime, type Regime } from "@/lib/engine/micro/regime";
 import { strategyHitRates } from "@/lib/alpha/hitRate";
+import { privateEdgeProfiles } from "@/lib/alpha/privateEdge";
 import { allOutcomes } from "./alpha/outcomes";
 import { listFeatures } from "./alpha/repo";
 import { audit } from "./audit";
@@ -47,6 +48,7 @@ import {
   createLiveIntent,
   liveGate,
   placePaperOrder,
+  reconcileLiveIntent,
 } from "./execution";
 import { getExposure } from "./hotpath/exposure";
 import { getBook, getHistory, getMarkets, priceLookup } from "./marketData";
@@ -56,6 +58,7 @@ const KV_BANDIT = "autopilot:bandit";
 const KV_MANAGED = "autopilot:managed";
 const KV_DECISIONS = "autopilot:decisions";
 const KV_PENDING = "autopilot:pending";
+const KV_PENDING_LIVE = "autopilot:pending_live";
 const ARM_PHRASE = "ARM LIVE AUTOPILOT";
 
 /**
@@ -80,6 +83,22 @@ interface PendingEntry {
   registeredFill: number;
 }
 
+interface PendingLiveOrder {
+  intentId: string;
+  role: "entry" | "exit";
+  tokenId: string;
+  conditionId?: string;
+  marketQuestion?: string;
+  outcome?: string;
+  strategy: string;
+  price: number;
+  size: number;
+  registeredFill: number;
+  placedAt: number;
+  endDate?: string;
+  exitPlan?: { partialAt: number; fullAt: number };
+}
+
 async function getPending(): Promise<PendingEntry[]> {
   const store = await getStore();
   return (await store.getKV<PendingEntry[]>(KV_PENDING)) ?? [];
@@ -88,6 +107,16 @@ async function getPending(): Promise<PendingEntry[]> {
 async function setPending(list: PendingEntry[]): Promise<void> {
   const store = await getStore();
   await store.setKV(KV_PENDING, list);
+}
+
+async function getPendingLive(): Promise<PendingLiveOrder[]> {
+  const store = await getStore();
+  return (await store.getKV<PendingLiveOrder[]>(KV_PENDING_LIVE)) ?? [];
+}
+
+async function setPendingLive(list: PendingLiveOrder[]): Promise<void> {
+  const store = await getStore();
+  await store.setKV(KV_PENDING_LIVE, list);
 }
 
 interface ApGlobal {
@@ -285,6 +314,100 @@ async function sweepPendingEntries(): Promise<void> {
   await setPending(still);
 }
 
+async function applyPendingLiveFill(p: PendingLiveOrder, newFill: number): Promise<void> {
+  if (newFill <= 0) return;
+  if (p.role === "entry") {
+    await registerManagedLot({
+      tokenId: p.tokenId,
+      conditionId: p.conditionId,
+      marketQuestion: p.marketQuestion,
+      outcome: p.outcome,
+      strategy: p.strategy,
+      mode: "live",
+      entryPrice: p.price,
+      size: newFill,
+      openedAt: Date.now(),
+      peakPrice: p.price,
+      endDate: p.endDate,
+      exitPlan: p.exitPlan,
+    });
+    record({
+      kind: "entry",
+      strategy: p.strategy,
+      conditionId: p.conditionId,
+      marketQuestion: p.marketQuestion,
+      side: "BUY",
+      price: p.price,
+      size: newFill,
+      orderId: p.intentId,
+      approved: true,
+      reason: `LIVE fill reconciled ${newFill}/${p.size} @ ${(p.price * 100).toFixed(1)}c — lot registered for exit management`,
+    });
+    return;
+  }
+
+  const managed = await getManaged();
+  const next: ManagedPosition[] = [];
+  let remainingFill = newFill;
+  for (const lot of managed) {
+    if (
+      remainingFill <= 0 ||
+      lot.mode !== "live" ||
+      lot.tokenId !== p.tokenId ||
+      lot.strategy !== p.strategy
+    ) {
+      next.push(lot);
+      continue;
+    }
+    const closed = Math.min(lot.size, remainingFill);
+    remainingFill -= closed;
+    const remainingLot = lot.size - closed;
+    if (remainingLot > 0) next.push({ ...lot, size: remainingLot });
+  }
+  await setManaged(next);
+  record({
+    kind: "exit",
+    strategy: p.strategy,
+    conditionId: p.conditionId,
+    marketQuestion: p.marketQuestion,
+    side: "SELL",
+    price: p.price,
+    size: newFill,
+    orderId: p.intentId,
+    approved: true,
+    reason: `LIVE exit fill reconciled ${newFill}/${p.size} @ ${(p.price * 100).toFixed(1)}c — managed lot reduced`,
+  });
+}
+
+async function sweepPendingLiveOrders(): Promise<void> {
+  const pending = await getPendingLive();
+  if (!pending.length) return;
+  const still: PendingLiveOrder[] = [];
+  for (const p of pending) {
+    try {
+      const intent = await reconcileLiveIntent(p.intentId);
+      const newFill = Math.max(0, intent.filledSize - p.registeredFill);
+      if (newFill > 0) {
+        await applyPendingLiveFill(p, newFill);
+        p.registeredFill = intent.filledSize;
+      }
+      const terminal = ["filled", "canceled", "rejected", "expired"].includes(intent.status);
+      if (!terminal || p.registeredFill < intent.filledSize) still.push(p);
+    } catch {
+      still.push(p);
+    }
+  }
+  await setPendingLive(still);
+}
+
+async function trackPendingLiveOrder(p: PendingLiveOrder): Promise<void> {
+  const pending = await getPendingLive();
+  const existing = pending.find((x) => x.intentId === p.intentId);
+  if (existing) Object.assign(existing, p);
+  else pending.push(p);
+  await setPendingLive(pending);
+}
+
 // ── status ────────────────────────────────────────────────────────────────────
 
 export async function getAutopilotStatus(): Promise<AutopilotStatus> {
@@ -333,7 +456,12 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
     // (e.g. wallet-mimic paper tests) must never be orphaned. Entries stay
     // strictly mode-gated below.
     const entriesEnabled = config.mode !== "off";
-    if (!entriesEnabled && (await getManaged()).length === 0) {
+    if (
+      !entriesEnabled &&
+      (await getManaged()).length === 0 &&
+      (await getPending()).length === 0 &&
+      (await getPendingLive()).length === 0
+    ) {
       return { ran: false, entries: 0, exits: 0 };
     }
     if (entriesEnabled && !s.session.startedAt) s.session.startedAt = Date.now();
@@ -351,6 +479,7 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
     // ── 0) resting maker entries: register fresh fills BEFORE the exit
     // sweep so a new lot gets exit management in this same tick ───────────
     await sweepPendingEntries();
+    await sweepPendingLiveOrders();
 
     // ── 1) exits first — risk-reducing, run even when the breaker is tripped ─
     let exits = 0;
@@ -430,8 +559,12 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
       // hit-rate governor input: measured 1h hit rates from the outcome
       // archive (in-memory read, ≤2000 rows) — the policy blocks entries from
       // strategies with a proven-bad win rate and boosts proven-good ones
+      const outcomes = await allOutcomes();
       const hitRates = new Map(
-        strategyHitRates(await allOutcomes()).map((h) => [h.strategy, h]),
+        strategyHitRates(outcomes).map((h) => [h.strategy, h]),
+      );
+      const privateEdge = new Map(
+        privateEdgeProfiles(outcomes).map((profile) => [profile.strategy, profile]),
       );
       // evidence outranks enablement: strategies whose latest walk-forward
       // replay measured NEGATIVE net expectancy (0 positive folds) cannot
@@ -461,6 +594,21 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         peakPrice: p.price,
         endDate: p.endDate,
       }));
+      const pendingLiveAsManaged: ManagedPosition[] = (await getPendingLive())
+        .filter((p) => p.role === "entry" && p.size > p.registeredFill)
+        .map((p) => ({
+          tokenId: p.tokenId,
+          conditionId: p.conditionId,
+          marketQuestion: p.marketQuestion,
+          outcome: p.outcome,
+          strategy: p.strategy,
+          mode: "live",
+          entryPrice: p.price,
+          size: p.size - p.registeredFill,
+          openedAt: p.placedAt,
+          peakPrice: p.price,
+          endDate: p.endDate,
+        }));
       const { candidates, skips } = decideEntries({
         signals: recentSignals,
         markets: marketMap,
@@ -469,13 +617,14 @@ export async function autopilotTick(): Promise<{ ran: boolean; entries: number; 
         settings,
         config,
         bandit,
-        managed: [...managed, ...pendingAsManaged],
+        managed: [...managed, ...pendingAsManaged, ...pendingLiveAsManaged],
         session: {
           trades: s.session.trades,
           notionalUsd: s.session.notionalUsd,
           tradesLastHour: s.session.tradesLastHour,
         },
         hitRates,
+        privateEdge,
         backtestBlocked,
         now: Date.now(),
       });
@@ -628,14 +777,34 @@ async function executeEntry(
     publishFeed("autopilot_entry", `[live] ${proposal.side} ${proposal.size} ${proposal.outcome} @ ${(proposal.price * 100).toFixed(1)}c — ${proposal.marketTitle?.slice(0, 45)} (${confirmed.status})`, {
       severity: confirmed.status === "rejected" ? "warn" : "info",
     });
-    // live fills are not tracked automatically; the lot is managed only if
-    // the CLOB accepted the order
-    if (confirmed.status === "submitted") {
-      const managed = await getManaged();
+    if (confirmed.clobOrderId && !["filled", "canceled", "rejected", "expired"].includes(confirmed.status)) {
       const livePlanMeta = signal.meta?.exitPlan as
         | { partialExitAt?: number; fullExitAt?: number }
         | undefined;
-      managed.push({
+      await trackPendingLiveOrder({
+        intentId: confirmed.id,
+        role: "entry",
+        tokenId: proposal.tokenId,
+        conditionId: proposal.conditionId,
+        marketQuestion: proposal.marketTitle,
+        outcome: proposal.outcome,
+        strategy,
+        price: proposal.price,
+        size: proposal.size,
+        registeredFill: confirmed.filledSize,
+        placedAt: Date.now(),
+        endDate,
+        exitPlan:
+          typeof livePlanMeta?.partialExitAt === "number" && typeof livePlanMeta?.fullExitAt === "number"
+            ? { partialAt: livePlanMeta.partialExitAt, fullAt: livePlanMeta.fullExitAt }
+            : undefined,
+      });
+    }
+    if (confirmed.filledSize > 0) {
+      const livePlanMeta = signal.meta?.exitPlan as
+        | { partialExitAt?: number; fullExitAt?: number }
+        | undefined;
+      await registerManagedLot({
         tokenId: proposal.tokenId,
         conditionId: proposal.conditionId,
         marketQuestion: proposal.marketTitle,
@@ -643,7 +812,7 @@ async function executeEntry(
         strategy,
         mode: "live",
         entryPrice: proposal.price,
-        size: proposal.size,
+        size: confirmed.filledSize,
         openedAt: Date.now(),
         peakPrice: proposal.price,
         endDate,
@@ -652,11 +821,9 @@ async function executeEntry(
             ? { partialAt: livePlanMeta.partialExitAt, fullAt: livePlanMeta.fullExitAt }
             : undefined,
       });
-      await setManaged(managed);
-      // live fills aren't tracked — accrue the proposal notional (conservative)
-      return { ok: true, filledNotionalUsd: proposal.price * proposal.size };
+      return { ok: true, filledNotionalUsd: proposal.price * confirmed.filledSize };
     }
-    return { ok: false, filledNotionalUsd: 0 };
+    return { ok: confirmed.status !== "rejected", filledNotionalUsd: 0 };
   }
 
   // paper: place, then enforce IOC semantics — manage only what filled now
@@ -800,6 +967,17 @@ async function executeExit(
       record({ kind: "skip", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, reason: `exit signaled (${reason}) but live autopilot is disarmed — manual action required` });
       return { closedSize: 0, remaining: pos.size, pnlUsd: 0 };
     }
+    const pendingExit = (await getPendingLive()).find(
+      (p) =>
+        p.role === "exit" &&
+        p.tokenId === pos.tokenId &&
+        p.strategy === pos.strategy &&
+        p.registeredFill < p.size,
+    );
+    if (pendingExit) {
+      record({ kind: "skip", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, reason: `exit signaled (${reason}) but live exit intent ${pendingExit.intentId} is still pending reconciliation` });
+      return { closedSize: 0, remaining: pos.size, pnlUsd: 0 };
+    }
     const book = await getBook(pos.tokenId).catch(() => undefined);
     const price = Math.min(0.99, Math.max(0.01, book?.bestBid ?? pos.peakPrice));
     const { intent } = await createLiveIntent({
@@ -822,8 +1000,26 @@ async function executeExit(
         error: "confirm threw",
       }));
     }
-    const dispatched = final.status === "submitted";
-    record({ kind: dispatched ? "exit" : "skip", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, side: "SELL", price, size: toSell, orderId: intent.id, reason: `LIVE exit ${reason}: ${detail} (${final.status}${final.error ? ` — ${final.error}` : ""})${dispatched ? "" : " — lot stays managed, retrying next tick"}` });
+    if (final.clobOrderId && !["filled", "canceled", "rejected", "expired"].includes(final.status)) {
+      await trackPendingLiveOrder({
+        intentId: final.id,
+        role: "exit",
+        tokenId: pos.tokenId,
+        conditionId: pos.conditionId,
+        marketQuestion: pos.marketQuestion,
+        outcome: pos.outcome,
+        strategy: pos.strategy,
+        price,
+        size: toSell,
+        registeredFill: final.filledSize,
+        placedAt: Date.now(),
+        endDate: pos.endDate,
+        exitPlan: pos.exitPlan,
+      });
+    }
+    const closedNow = Math.min(toSell, final.filledSize);
+    const dispatched = !["rejected", "canceled", "expired"].includes(final.status);
+    record({ kind: closedNow > 0 ? "exit" : "skip", strategy: pos.strategy, conditionId: pos.conditionId, marketQuestion: pos.marketQuestion, side: "SELL", price, size: toSell, orderId: intent.id, reason: `LIVE exit ${reason}: ${detail} (${final.status}, filled ${closedNow}/${toSell}${final.error ? ` — ${final.error}` : ""})${closedNow > 0 ? "" : " — lot stays managed until venue fill reconciles"}` });
     publishFeed("autopilot_exit", `[live] exit ${pos.marketQuestion?.slice(0, 45)} — ${reason} (${final.status})`, {
       severity: dispatched ? "info" : "warn",
     });
@@ -831,8 +1027,8 @@ async function executeExit(
     // managed so stops/trails/pre-close flattens keep retrying — silently
     // dropping a live position from exit management is the worst failure
     // mode this engine has
-    return dispatched
-      ? { closedSize: toSell, remaining: pos.size - toSell, pnlUsd: 0 }
+    return closedNow > 0
+      ? { closedSize: closedNow, remaining: pos.size - closedNow, pnlUsd: 0 }
       : { closedSize: 0, remaining: pos.size, pnlUsd: 0 };
   }
 
